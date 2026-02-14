@@ -8,6 +8,7 @@ import { UsersModule } from './users/users.module';
 import { PatientsModule } from './patients/patients.module';
 import { MedecinsModule } from './medecins/medecins.module';
 import { PharmaciensModule } from './pharmaciens/pharmaciens.module';
+import { SessionsModule } from './sessions/sessions.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { PharmaciensModule } from './pharmaciens/pharmaciens.module';
     PatientsModule,
     MedecinsModule,
     PharmaciensModule,
+    SessionsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

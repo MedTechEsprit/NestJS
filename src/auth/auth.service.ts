@@ -12,15 +12,22 @@ import { User, UserDocument } from '../users/schemas/user.schema';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { StatutCompte } from '../common/enums/statut-compte.enum';
+import { SessionsService } from '../sessions/sessions.service';
 
 @Injectable()
 export class AuthService {
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private jwtService: JwtService,
+    private sessionsService: SessionsService,
   ) {}
 
-  async register(registerDto: RegisterDto): Promise<{ user: Partial<User>; accessToken: string }> {
+  async register(
+    registerDto: RegisterDto,
+    deviceInfo?: string,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<{ user: Partial<User>; accessToken: string }> {
     const { email, motDePasse, role, ...rest } = registerDto;
 
     // Vérifier si l'email existe déjà
@@ -53,6 +60,19 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload);
 
+    // Créer la session
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7); // 7 jours
+
+    await this.sessionsService.createSession(
+      savedUser._id.toString(),
+      accessToken,
+      expiresAt,
+      deviceInfo,
+      ipAddress,
+      userAgent,
+    );
+
     // Retourner l'utilisateur sans le mot de passe
     const { motDePasse: _, ...userResponse } = savedUser.toObject();
 
@@ -62,7 +82,12 @@ export class AuthService {
     };
   }
 
-  async login(loginDto: LoginDto): Promise<{ user: Partial<User>; accessToken: string }> {
+  async login(
+    loginDto: LoginDto,
+    deviceInfo?: string,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<{ user: Partial<User>; accessToken: string }> {
     const { email, motDePasse } = loginDto;
 
     // Trouver l'utilisateur par email
@@ -92,6 +117,19 @@ export class AuthService {
     };
 
     const accessToken = this.jwtService.sign(payload);
+
+    // Créer la session
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7); // 7 jours
+
+    await this.sessionsService.createSession(
+      user._id.toString(),
+      accessToken,
+      expiresAt,
+      deviceInfo,
+      ipAddress,
+      userAgent,
+    );
 
     // Retourner l'utilisateur sans le mot de passe
     const { motDePasse: _, ...userResponse } = user.toObject();

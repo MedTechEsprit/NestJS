@@ -40,7 +40,7 @@ Cette application est un backend **NestJS + MongoDB** pour la gestion du diabèt
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     MongoDB Database                         │
-│         Collection: users (avec discriminator)               │
+│    Collection: users (discriminator)  Collection: sessions  │
 │    ┌─────────────┬──────────────┬────────────────┐         │
 │    │   Patients  │   Médecins   │  Pharmaciens   │         │
 │    └─────────────┴──────────────┴────────────────┘         │
@@ -55,6 +55,7 @@ Cette application est un backend **NestJS + MongoDB** pour la gestion du diabèt
 4. **Role-Based Access Control (RBAC)** : Guards pour protéger les routes
 5. **DTO Validation** : Validation automatique avec class-validator
 6. **JWT Authentication** : Tokens sécurisés pour l'authentification
+7. **Session Management** : Gestion des sessions avec stockage en base de données
 
 ---
 
@@ -229,8 +230,14 @@ diabetes-backend/
 │   ├── auth/                     # Module d'authentification
 │   │   ├── strategies/           # JwtStrategy
 │   │   ├── auth.controller.ts    # Routes: /register, /login, /profile
-│   │   ├── auth.service.ts       # Logique: hashage, validation, JWT
+│   │   ├── auth.service.ts       # Logique: hashage, validation, JWT, sessions
 │   │   └── auth.module.ts
+│   │
+│   ├── sessions/                 # Module sessions
+│   │   ├── schemas/              # Session.schema.ts
+│   │   ├── sessions.controller.ts # Routes: /logout, /active, /all
+│   │   ├── sessions.service.ts   # Gestion sessions actives
+│   │   └── sessions.module.ts
 │   │
 │   ├── users/                    # Module utilisateurs (admin)
 │   │   ├── schemas/              # User.schema.ts (base)
@@ -628,7 +635,7 @@ POST /api/pharmaciens/507f1f77bcf86cd799439011/medicaments
 
 ## 🔐 Authentification et Sécurité
 
-### Flow d'Authentification JWT
+### Flow d'Authentification JWT avec Sessions
 
 ```
 1. Client envoie email + motDePasse
@@ -642,41 +649,150 @@ POST /api/pharmaciens/507f1f77bcf86cd799439011/medicaments
      role: user.role
    }
          ↓
-4. Client reçoit le token
+4. Crée une session dans MongoDB:
+   - token (JWT)
+   - userId
+   - deviceInfo (Mobile/Desktop/Tablet)
+   - ipAddress
+   - userAgent
+   - expiresAt (7 jours)
+   - isActive: true
          ↓
-5. Client envoie le token dans les requêtes suivantes:
+5. Client reçoit le token
+         ↓
+6. Client envoie le token dans les requêtes suivantes:
    Authorization: Bearer <token>
          ↓
-6. JwtAuthGuard valide le token avec JwtStrategy
+7. JwtStrategy valide le token ET vérifie la session:
+   - Token JWT valide ?
+   - Session existe en base ?
+   - Session active (isActive: true) ?
+   - Session non expirée ?
          ↓
-7. Si valide, extrait le payload et l'attache à request.user
+8. Si tout est valide:
+   - Met à jour lastActivityAt
+   - Extrait request.user
+   - Continue vers le contrôleur
          ↓
-8. RolesGuard vérifie que request.user.role correspond
+9. En cas de logout:
+   - DELETE /api/sessions/current → isActive: false
+   - DELETE /api/sessions/all → toutes les sessions révoquées
 ```
 
-### JwtStrategy
+### Gestion des Sessions
 
-**Code :**
+**Pourquoi des sessions ?**
+- ✅ **Logout réel** : Révoquer un token sans attendre son expiration
+- ✅ **Multi-device** : Voir et gérer tous les appareils connectés
+- ✅ **Sécurité renforcée** : Détecter les connexions suspectes
+- ✅ **Audit trail** : Tracer les connexions (IP, device, date)
+
+**Schéma Session :**
+```typescript
+{
+  userId: ObjectId,
+  token: string,              // JWT unique
+  deviceInfo: string,         // "Mobile", "Desktop", "Tablet"
+  ipAddress: string,          // IP de connexion
+  userAgent: string,          // User-Agent HTTP
+  expiresAt: Date,            // Auto-suppression MongoDB (TTL index)
+  isActive: boolean,          // true/false
+  lastActivityAt: Date,       // Mise à jour à chaque requête
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+**APIs de gestion des sessions :**
+
+#### GET `/api/sessions/active`
+Liste toutes mes sessions actives avec détails.
+
+**Réponse :**
+```json
+[
+  {
+    "_id": "...",
+    "deviceInfo": "Mobile",
+    "ipAddress": "192.168.1.10",
+    "lastActivityAt": "2026-02-14T10:30:00Z",
+    "createdAt": "2026-02-13T08:00:00Z",
+    "expiresAt": "2026-02-20T08:00:00Z",
+    "isCurrent": true
+  },
+  {
+    "_id": "...",
+    "deviceInfo": "Desktop",
+    "ipAddress": "192.168.1.15",
+    "lastActivityAt": "2026-02-12T15:20:00Z",
+    "createdAt": "2026-02-10T09:00:00Z",
+    "isCurrent": false
+  }
+]
+```
+
+#### DELETE `/api/sessions/current`
+Logout de la session actuelle uniquement.
+
+#### DELETE `/api/sessions/all`
+Déconnecter tous les appareils (toutes sessions révoquées).
+
+**Réponse :**
+```json
+{
+  "message": "Déconnecté de 3 appareil(s)",
+  "count": 3
+}
+```
+
+#### DELETE `/api/sessions/:sessionId`
+Révoquer une session spécifique (par exemple, déconnecter un appareil suspect).
+
+### JwtStrategy Modifié
+
+**Code avec validation de session :**
 ```typescript
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    private sessionsService: SessionsService,
     configService: ConfigService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       secretOrKey: configService.get<string>('JWT_SECRET'),
+      passReqToCallback: true, // Pour accéder au token complet
     });
   }
 
-  async validate(payload: any) {
+  async validate(request: Request, payload: any) {
+    // Extraire le token
+    const token = this.extractTokenFromHeader(request);
+    
+    // Vérifier que la session existe et est active
+    const session = await this.sessionsService.findByToken(token);
+    if (!session) {
+      throw new UnauthorizedException('Session invalide ou expirée');
+    }
+    
+    // Vérifier l'utilisateur
     const user = await this.userModel.findById(payload.sub);
     if (!user) throw new UnauthorizedException();
+    
+    // Mettre à jour l'activité de la session
+    await this.sessionsService.updateActivity(token);
+    
     return user; // Attaché à request.user
   }
 }
 ```
+
+**Changements clés :**
+- ✅ `passReqToCallback: true` pour accéder au token complet
+- ✅ Validation de la session avant l'utilisateur
+- ✅ Mise à jour automatique de `lastActivityAt`
+- ✅ Erreur si session révoquée (isActive: false)
 
 ### Protection des Routes
 
@@ -876,20 +992,62 @@ GET http://localhost:3000/api/pharmaciens/search?medicament=Metformine
 Authorization: Bearer <votre_token>
 ```
 
+#### 7. Voir mes sessions actives
+
+```bash
+GET http://localhost:3000/api/sessions/active
+Authorization: Bearer <votre_token>
+```
+
+**Réponse :**
+```json
+[
+  {
+    "_id": "65a1b2c3d4e5f6a7b8c9d0e3",
+    "deviceInfo": "Mobile",
+    "ipAddress": "192.168.1.10",
+    "lastActivityAt": "2026-02-14T10:30:00Z",
+    "createdAt": "2026-02-13T08:00:00Z",
+    "isCurrent": true
+  }
+]
+```
+
+#### 8. Logout de la session actuelle
+
+```bash
+DELETE http://localhost:3000/api/sessions/current
+Authorization: Bearer <votre_token>
+```
+
+#### 9. Logout de tous les appareils
+
+```bash
+DELETE http://localhost:3000/api/sessions/all
+Authorization: Bearer <votre_token>
+```
+
 ---
 
 ## 💡 Scénarios d'Utilisation
 
-### Scénario 1: Nouveau Patient s'Inscrit
+### Scénario 1: Nouveau Patient s'Inscrit avec Session
 
 ```
 1. Patient → POST /api/auth/register (role: PATIENT)
 2. Backend → Hashe le mot de passe avec bcrypt
 3. Backend → Sauvegarde dans MongoDB (collection: users)
 4. Backend → Génère JWT avec payload { sub, email, role }
-5. Patient ← Reçoit { user, accessToken }
-6. Patient → Stocke le token (localStorage/sessionStorage)
-7. Patient → Peut maintenant accéder aux routes protégées
+5. Backend → Crée une session dans MongoDB:
+   - token: <JWT>
+   - deviceInfo: "Mobile" (détecté via User-Agent)
+   - ipAddress: "192.168.1.10"
+   - expiresAt: Date + 7 jours
+   - isActive: true
+6. Patient ← Reçoit { user, accessToken }
+7. Patient → Stocke le token (localStorage/sessionStorage)
+8. Patient → Peut maintenant accéder aux routes protégées
+9. Chaque requête → JwtStrategy vérifie token + session active
 ```
 
 ### Scénario 2: Médecin Gère ses Patients
@@ -914,9 +1072,60 @@ Authorization: Bearer <votre_token>
 5. Patient → Peut contacter la pharmacie
 ```
 
+### Scénario 4: Utilisateur se Déconnecte (Logout)
+
+```
+1. Utilisateur → DELETE /api/sessions/current
+2. Backend → Extrait le token du header Authorization
+3. Backend → Trouve la session avec ce token
+4. Backend → Met à jour: isActive = false
+5. Utilisateur ← Reçoit { message: "Déconnexion réussie" }
+6. Prochaine requête avec ce token → JwtStrategy rejette:
+   - Session existe mais isActive: false
+   - Erreur: "Session invalide ou expirée"
+```
+
+### Scénario 5: Utilisateur connecté sur plusieurs appareils
+
+```
+1. Patient se connecte sur Mobile → Session 1 créée (deviceInfo: "Mobile")
+2. Patient se connecte sur Desktop → Session 2 créée (deviceInfo: "Desktop")
+3. Patient → GET /api/sessions/active
+4. Backend ← Retourne les 2 sessions avec détails
+5. Patient voit activité suspecte sur Desktop
+6. Patient → DELETE /api/sessions/<session_desktop_id>
+7. Backend → Révoque uniquement la session Desktop
+8. Desktop ne peut plus accéder (token invalide)
+9. Mobile continue de fonctionner normalement
+```
+
 ---
 
 ## 📊 Schémas MongoDB
+
+### Collection: `sessions`
+
+**Structure :**
+```javascript
+{
+  _id: ObjectId("..."),
+  userId: ObjectId("507f1f77bcf86cd799439011"), // ref User
+  token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  deviceInfo: "Mobile Device",
+  ipAddress: "192.168.1.10",
+  userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0...)",
+  expiresAt: ISODate("2026-02-21T08:00:00Z"),
+  isActive: true,
+  lastActivityAt: ISODate("2026-02-14T10:30:00Z"),
+  createdAt: ISODate("2026-02-13T08:00:00Z"),
+  updatedAt: ISODate("2026-02-14T10:30:00Z")
+}
+```
+
+**Index :**
+- `{ token: 1 }` unique - Recherche rapide par token
+- `{ userId: 1, isActive: 1 }` - Recherche sessions actives d'un user
+- `{ expiresAt: 1 }, { expireAfterSeconds: 0 }` - Auto-suppression TTL
 
 ### Collection: `users`
 
@@ -986,9 +1195,19 @@ Authorization: Bearer <votre_token>
 
 | Méthode | Route | Protection | Rôle | Description |
 |---------|-------|------------|------|-------------|
-| POST | `/api/auth/register` | ❌ Aucune | Tous | Créer un compte |
-| POST | `/api/auth/login` | ❌ Aucune | Tous | Se connecter |
+| POST | `/api/auth/register` | ❌ Aucune | Tous | Créer un compte + session |
+| POST | `/api/auth/login` | ❌ Aucune | Tous | Se connecter + session |
 | GET | `/api/auth/profile` | ✅ JWT | Tous | Mon profil |
+
+### Sessions Module
+
+| Méthode | Route | Protection | Rôle | Description |
+|---------|-------|------------|------|-------------|
+| GET | `/api/sessions/active` | ✅ JWT | Tous | Mes sessions actives |
+| GET | `/api/sessions/count` | ✅ JWT | Tous | Nombre de sessions |
+| DELETE | `/api/sessions/current` | ✅ JWT | Tous | Logout (session actuelle) |
+| DELETE | `/api/sessions/all` | ✅ JWT | Tous | Logout tous appareils |
+| DELETE | `/api/sessions/:sessionId` | ✅ JWT | Tous | Révoquer une session |
 
 ### Users Module
 
@@ -1045,14 +1264,18 @@ Authorization: Bearer <votre_token>
 
 - ✅ **Hashage bcrypt** : Mots de passe jamais stockés en clair
 - ✅ **JWT avec expiration** : Tokens valides 7 jours
+- ✅ **Session Management** : Validation double (JWT + session active)
 - ✅ **Guards multi-niveaux** : JwtAuthGuard + RolesGuard
 - ✅ **Validation stricte** : class-validator sur tous les DTOs
 - ✅ **Pas de mot de passe dans les réponses** : Destructuring pour exclure
+- ✅ **Logout fonctionnel** : Révocation de sessions via isActive
+- ✅ **Audit trail** : IP, device, lastActivityAt pour chaque session
 
 ### 2. Performance
 
 - ✅ **Pagination** : Évite de charger toutes les données
-- ✅ **Indexes MongoDB** : email (unique), numeroOrdre (unique)
+- ✅ **Indexes MongoDB** : email (unique), numeroOrdre (unique), token (unique)
+- ✅ **TTL Index** : Auto-suppression des sessions expirées
 - ✅ **Populate sélectif** : Charge uniquement les champs nécessaires
 - ✅ **Promise.all** : Requêtes parallèles (count + find)
 
