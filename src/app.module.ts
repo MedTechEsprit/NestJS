@@ -9,6 +9,7 @@ import { PatientsModule } from './patients/patients.module';
 import { MedecinsModule } from './medecins/medecins.module';
 import { PharmaciensModule } from './pharmaciens/pharmaciens.module';
 import { SessionsModule } from './sessions/sessions.module';
+import { GlucoseModule } from './glucose/glucose.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { SessionsModule } from './sessions/sessions.module';
     MedecinsModule,
     PharmaciensModule,
     SessionsModule,
+    GlucoseModule,
   ],
   controllers: [AppController],
   providers: [AppService],
