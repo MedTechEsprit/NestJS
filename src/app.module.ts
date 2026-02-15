@@ -10,6 +10,7 @@ import { MedecinsModule } from './medecins/medecins.module';
 import { PharmaciensModule } from './pharmaciens/pharmaciens.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { GlucoseModule } from './glucose/glucose.module';
+import { NutritionModule } from './nutrition/nutrition.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { GlucoseModule } from './glucose/glucose.module';
     PharmaciensModule,
     SessionsModule,
     GlucoseModule,
+    NutritionModule,
   ],
   controllers: [AppController],
   providers: [AppService],
