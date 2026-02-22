@@ -5,7 +5,7 @@ import { ApiProperty } from '@nestjs/swagger';
 
 export type MedecinDocument = Medecin & Document;
 
-@Schema()
+// Note: No @Schema() decorator for discriminator schemas
 export class Medecin extends User {
   @ApiProperty({ description: 'Spécialité du médecin' })
   @Prop({ required: true })
@@ -40,7 +40,7 @@ export class Medecin extends User {
   disponibilite: Record<string, any>;
 
   @ApiProperty({ description: 'Liste des patients (ObjectId)', type: [String] })
-  @Prop({ type: [{ type: Types.ObjectId, ref: 'Patient' }], default: [] })
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'User' }], default: [] })
   listePatients: Types.ObjectId[];
 
   @ApiProperty({ description: 'Note moyenne' })
@@ -54,6 +54,5 @@ export class Medecin extends User {
 
 export const MedecinSchema = SchemaFactory.createForClass(Medecin);
 
-// Index pour la recherche
+// Index for specialty search (numeroOrdre already has unique index from @Prop)
 MedecinSchema.index({ specialite: 1 });
-MedecinSchema.index({ numeroOrdre: 1 }, { unique: true });

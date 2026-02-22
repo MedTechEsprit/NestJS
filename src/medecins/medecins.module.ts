@@ -1,12 +1,14 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { MedecinsService } from './medecins.service';
 import { MedecinsController } from './medecins.controller';
-import { Medecin, MedecinSchema } from './schemas/medecin.schema';
+import { AuthModule } from '../auth/auth.module';
+import { GlucoseModule } from '../glucose/glucose.module';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: Medecin.name, schema: MedecinSchema }]),
+    // Import AuthModule to access Medecin discriminator model
+    AuthModule,
+    GlucoseModule,
   ],
   controllers: [MedecinsController],
   providers: [MedecinsService],

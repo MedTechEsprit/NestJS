@@ -51,10 +51,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Utilisateur non trouvé');
     }
 
-    if (user.statutCompte !== 'ACTIF') {
-      throw new UnauthorizedException('Compte suspendu');
-    }
-
     // Mettre à jour la dernière activité de la session
     await this.sessionsService.updateActivity(token);
 

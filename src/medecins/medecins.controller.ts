@@ -1,13 +1,13 @@
 import {
   Controller,
   Get,
-  Post,
   Body,
   Patch,
   Param,
   Delete,
   UseGuards,
   Query,
+  Post,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -17,7 +17,6 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { MedecinsService } from './medecins.service';
-import { CreateMedecinDto } from './dto/create-medecin.dto';
 import { UpdateMedecinDto } from './dto/update-medecin.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -31,15 +30,6 @@ import { PaginationDto } from '../common/dto/pagination.dto';
 @ApiBearerAuth()
 export class MedecinsController {
   constructor(private readonly medecinsService: MedecinsService) {}
-
-  @Post()
-  @Roles(Role.MEDECIN)
-  @ApiOperation({ summary: 'Créer un nouveau médecin' })
-  @ApiResponse({ status: 201, description: 'Médecin créé avec succès' })
-  @ApiResponse({ status: 409, description: 'Email ou numéro d\'ordre déjà utilisé' })
-  create(@Body() createMedecinDto: CreateMedecinDto) {
-    return this.medecinsService.create(createMedecinDto);
-  }
 
   @Get()
   @ApiOperation({ summary: 'Récupérer tous les médecins avec pagination' })
@@ -109,5 +99,43 @@ export class MedecinsController {
   @ApiResponse({ status: 200, description: 'Note mise à jour' })
   updateNote(@Param('id') id: string, @Body('note') note: number) {
     return this.medecinsService.updateNote(id, note);
+  }
+
+  @Get(':id/my-patients')
+  @Roles(Role.MEDECIN)
+  @ApiOperation({ summary: 'Récupérer la liste des patients du médecin avec leur statut de santé' })
+  @ApiQuery({ name: 'page', required: false, description: 'Numéro de la page', type: Number })
+  @ApiQuery({ name: 'limit', required: false, description: 'Nombre d\'éléments par page', type: Number })
+  @ApiQuery({ name: 'status', required: false, description: 'Filtrer par statut (all, stable, attention, critical)' })
+  @ApiQuery({ name: 'search', required: false, description: 'Rechercher par nom, prénom ou email' })
+  @ApiResponse({ status: 200, description: 'Liste des patients avec statut' })
+  @ApiResponse({ status: 404, description: 'Médecin non trouvé' })
+  getMyPatients(
+    @Param('id') id: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+  ) {
+    const paginationDto: PaginationDto = { page, limit };
+    return this.medecinsService.getMyPatients(id, paginationDto, status, search);
+  }
+
+  @Patch(':id/toggle-status')
+  @Roles(Role.MEDECIN)
+  @ApiOperation({ summary: 'Basculer le statut du compte entre ACTIF et INACTIF' })
+  @ApiResponse({ status: 200, description: 'Statut du compte mis à jour' })
+  @ApiResponse({ status: 404, description: 'Médecin non trouvé' })
+  toggleAccountStatus(@Param('id') id: string) {
+    return this.medecinsService.toggleAccountStatus(id);
+  }
+
+  @Get(':id/status')
+  @Roles(Role.MEDECIN)
+  @ApiOperation({ summary: 'Obtenir le statut du compte du médecin' })
+  @ApiResponse({ status: 200, description: 'Statut du compte récupéré' })
+  @ApiResponse({ status: 404, description: 'Médecin non trouvé' })
+  getAccountStatus(@Param('id') id: string) {
+    return this.medecinsService.getAccountStatus(id);
   }
 }

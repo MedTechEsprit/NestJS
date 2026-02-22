@@ -7,7 +7,7 @@ import { ApiProperty } from '@nestjs/swagger';
 
 export type PatientDocument = Patient & Document;
 
-@Schema()
+// Note: No @Schema() decorator for discriminator schemas
 export class Patient extends User {
   // Informations personnelles
   @ApiProperty({ description: 'Date de naissance' })

@@ -23,9 +23,9 @@ export class SessionsController {
   @Get('active')
   @ApiOperation({ summary: 'Récupérer toutes mes sessions actives' })
   @ApiResponse({ status: 200, description: 'Liste des sessions actives' })
-  async getActiveSessions(@CurrentUser() user: UserDocument) {
+  async getActiveSessions(@CurrentUser() user: any) {
     const sessions = await this.sessionsService.getActiveSessions(
-      user._id.toString(),
+      (user as UserDocument)._id.toString(),
     );
 
     // Ne pas renvoyer le token complet pour la sécurité
@@ -43,9 +43,9 @@ export class SessionsController {
   @Get('count')
   @ApiOperation({ summary: 'Compter mes sessions actives' })
   @ApiResponse({ status: 200, description: 'Nombre de sessions actives' })
-  async countActiveSessions(@CurrentUser() user: UserDocument) {
+  async countActiveSessions(@CurrentUser() user: any) {
     const count = await this.sessionsService.countActiveSessions(
-      user._id.toString(),
+      (user as UserDocument)._id.toString(),
     );
     return { count };
   }
@@ -67,9 +67,9 @@ export class SessionsController {
     status: 200,
     description: 'Toutes les sessions révoquées avec succès',
   })
-  async logoutAll(@CurrentUser() user: UserDocument) {
+  async logoutAll(@CurrentUser() user: any) {
     const count = await this.sessionsService.revokeAllSessions(
-      user._id.toString(),
+      (user as UserDocument)._id.toString(),
     );
     return {
       message: `Déconnecté de ${count} appareil(s)`,
@@ -81,11 +81,11 @@ export class SessionsController {
   @ApiOperation({ summary: 'Révoquer une session spécifique' })
   @ApiResponse({ status: 200, description: 'Session révoquée avec succès' })
   async revokeSession(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: any,
     @Param('sessionId') sessionId: string,
   ) {
     await this.sessionsService.revokeSessionById(
-      user._id.toString(),
+      (user as UserDocument)._id.toString(),
       sessionId,
     );
     return { message: 'Session révoquée avec succès' };

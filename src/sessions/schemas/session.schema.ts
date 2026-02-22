@@ -27,7 +27,7 @@ export class Session {
   userAgent?: string;
 
   @ApiProperty({ description: 'Date d\'expiration de la session' })
-  @Prop({ required: true, index: true })
+  @Prop({ required: true })
   expiresAt: Date;
 
   @ApiProperty({ description: 'Si la session est active' })
@@ -47,8 +47,9 @@ export class Session {
 
 export const SessionSchema = SchemaFactory.createForClass(Session);
 
-// Index pour auto-suppression des sessions expirées
+// Index for auto-deletion of expired sessions (using existing expiresAt index)
+// Note: expiresAt already has index from @Prop, we just add TTL behavior
 SessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
-// Index composé pour recherches rapides
+// Composite index for fast lookups (userId already has index from @Prop)
 SessionSchema.index({ userId: 1, isActive: 1 });

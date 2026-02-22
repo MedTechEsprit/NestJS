@@ -35,8 +35,9 @@ export class User {
   @Prop()
   photoProfil: string;
 
+  // Note: role field is managed automatically by Mongoose discriminatorKey
+  // It's defined here for TypeScript typing but not as a @Prop
   @ApiProperty({ enum: Role, description: 'Rôle de l\'utilisateur' })
-  @Prop({ required: true, enum: Role })
   role: Role;
 
   @ApiProperty({ enum: StatutCompte, description: 'Statut du compte' })
@@ -52,5 +53,4 @@ export class User {
 
 export const UserSchema = SchemaFactory.createForClass(User);
 
-// Index pour la recherche par email
-UserSchema.index({ email: 1 }, { unique: true });
+// Note: email index already created via @Prop({ unique: true })

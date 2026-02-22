@@ -73,7 +73,7 @@ export class UsersService {
     // Vérifier si l'email est déjà utilisé par un autre utilisateur
     if (updateUserDto.email && updateUserDto.email !== user.email) {
       const existingUser = await this.findByEmail(updateUserDto.email);
-      if (existingUser && existingUser._id.toString() !== id) {
+      if (existingUser && (existingUser._id as any).toString() !== id) {
         throw new ConflictException('Cet email est déjà utilisé');
       }
     }

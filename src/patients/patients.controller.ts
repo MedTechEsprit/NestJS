@@ -63,6 +63,24 @@ export class PatientsController {
     return this.patientsService.findByTypeDiabete(typeDiabete, paginationDto);
   }
 
+  @Get('debug/all-roles')
+  @Roles(Role.MEDECIN, Role.PHARMACIEN)
+  @ApiOperation({ summary: 'Debug: voir tous les utilisateurs avec leurs rôles' })
+  @ApiResponse({ status: 200, description: 'Liste de tous les utilisateurs avec rôles' })
+  debugAllRoles() {
+    return this.patientsService.debugAllRoles();
+  }
+
+  @Get('search/by-name-or-email')
+  @Roles(Role.MEDECIN, Role.PHARMACIEN)
+  @ApiOperation({ summary: 'Rechercher un patient par nom ou email' })
+  @ApiQuery({ name: 'query', required: true, type: String, description: 'Nom, prénom ou email du patient' })
+  @ApiResponse({ status: 200, description: 'Patients trouvés' })
+  @ApiResponse({ status: 400, description: 'Paramètre de recherche manquant' })
+  searchByNameOrEmail(@Query('query') query: string) {
+    return this.patientsService.searchByNameOrEmail(query);
+  }
+
   @Get(':id')
   @Roles(Role.PATIENT, Role.MEDECIN, Role.PHARMACIEN)
   @ApiOperation({ summary: 'Récupérer un patient par son ID' })
