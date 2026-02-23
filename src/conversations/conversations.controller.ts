@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Query,
@@ -61,5 +62,14 @@ export class ConversationsController {
     @Body() createMessageDto: CreateMessageDto,
   ) {
     return this.messagesService.create(conversationId, createMessageDto);
+  }
+
+  @Patch('conversations/:id/read/:userId')
+  @ApiOperation({ summary: 'Mark all messages in conversation as read for a user' })
+  markAsRead(
+    @Param('id') conversationId: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.messagesService.markAsRead(conversationId, userId);
   }
 }
