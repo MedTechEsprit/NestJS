@@ -5,6 +5,10 @@ import { Model, Types } from 'mongoose';
 import { MedicationRequest, MedicationRequestDocument } from '../medication-requests/schemas/medication-request.schema';
 import { Pharmacien, PharmacienDocument } from '../pharmaciens/schemas/pharmacien.schema';
 import { PharmacyActivity, PharmacyActivityDocument } from '../activities/schemas/pharmacy-activity.schema';
+import { User, UserDocument } from '../users/schemas/user.schema';
+import { AiPatternService } from '../ai-pattern/ai-pattern.service';
+import { Role } from '../common/enums/role.enum';
+import { StatutCompte } from '../common/enums/statut-compte.enum';
 
 @Injectable()
 export class CronService {
@@ -14,6 +18,8 @@ export class CronService {
     @InjectModel(MedicationRequest.name) private requestModel: Model<MedicationRequestDocument>,
     @InjectModel(Pharmacien.name) private pharmacienModel: Model<PharmacienDocument>,
     @InjectModel(PharmacyActivity.name) private activityModel: Model<PharmacyActivityDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
+    private readonly aiPatternService: AiPatternService,
   ) {}
 
   @Cron('*/5 * * * *') // Toutes les 5 minutes
@@ -91,5 +97,46 @@ export class CronService {
     if (expiredRequests.length > 0) {
       this.logger.log(`${expiredRequests.length} demandes traitées`);
     }
+  }
+
+  // ── Weekly pattern analysis — every Monday at 08:00 ─────────────────────
+
+  @Cron('0 8 * * 1')
+  async weeklyPatternAnalysis(): Promise<void> {
+    this.logger.log('⏰ Weekly pattern analysis started...');
+
+    const patients = await this.userModel
+      .find({ role: Role.PATIENT, statutCompte: StatutCompte.ACTIF })
+      .select('_id')
+      .lean()
+      .exec();
+
+    this.logger.log(`Found ${patients.length} active patients to analyze`);
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const patient of patients) {
+      try {
+        await this.aiPatternService.analyzePatterns(String(patient._id), 'cron');
+        successCount++;
+        this.logger.log(`✅ Pattern analyzed for patient ${patient._id}`);
+      } catch (err) {
+        errorCount++;
+        this.logger.warn(
+          `⚠️ Pattern analysis failed for patient ${patient._id}: ${
+            (err as Error).message
+          }`,
+        );
+        // Continue with next patient — never throw
+      }
+
+      // 3-second delay between patients to avoid overloading Ollama
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+
+    this.logger.log(
+      `✅ Weekly pattern analysis done. Success: ${successCount}, Errors: ${errorCount}`,
+    );
   }
 }

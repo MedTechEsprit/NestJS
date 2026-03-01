@@ -148,6 +148,17 @@ export class GlucoseController {
     return this.glucoseService.getTrend(patientId);
   }
 
+  @Get('patient/:patientId/records')
+  @Roles(Role.MEDECIN)
+  @ApiOperation({ summary: 'Récupérer les enregistrements de glycémie d\'un patient (Médecin)' })
+  @ApiResponse({ status: 200, description: 'Liste des enregistrements du patient' })
+  findPatientRecords(
+    @Param('patientId') patientId: string,
+    @Query() paginationDto: PaginationDto,
+  ) {
+    return this.glucoseService.findMyRecords(patientId, paginationDto);
+  }
+
   @Get(':id')
   @Roles(Role.PATIENT)
   @ApiOperation({ summary: 'Récupérer un enregistrement spécifique' })

@@ -13,20 +13,27 @@ export class ConversationsService {
   ) {}
 
   async create(createConversationDto: CreateConversationDto): Promise<Conversation> {
-    // Check if conversation already exists
-    const existing = await this.conversationModel.findOne({
-      patientId: new Types.ObjectId(createConversationDto.patientId),
-      doctorId: new Types.ObjectId(createConversationDto.doctorId),
-    });
+    const isPharmacist = !!createConversationDto.pharmacistId;
+    const type = isPharmacist ? 'pharmacist' : 'doctor';
 
-    if (existing) {
-      return existing;
+    const filter: any = { patientId: new Types.ObjectId(createConversationDto.patientId) };
+    if (isPharmacist) {
+      filter.pharmacistId = new Types.ObjectId(createConversationDto.pharmacistId);
+    } else {
+      filter.doctorId = new Types.ObjectId(createConversationDto.doctorId);
     }
 
-    const conversation = new this.conversationModel({
+    const existing = await this.conversationModel.findOne(filter);
+    if (existing) return existing;
+
+    const doc: any = {
       patientId: new Types.ObjectId(createConversationDto.patientId),
-      doctorId: new Types.ObjectId(createConversationDto.doctorId),
-    });
+      type,
+    };
+    if (isPharmacist) doc.pharmacistId = new Types.ObjectId(createConversationDto.pharmacistId);
+    else doc.doctorId = new Types.ObjectId(createConversationDto.doctorId);
+
+    const conversation = new this.conversationModel(doc);
     return conversation.save();
   }
 
@@ -34,6 +41,7 @@ export class ConversationsService {
     const conversations = await this.conversationModel
       .find({ patientId: new Types.ObjectId(patientId) })
       .populate('doctorId', 'nom prenom email')
+      .populate('pharmacistId', 'nom prenom email nomPharmacie')
       .sort({ lastMessageTime: -1 })
       .lean();
 
@@ -71,6 +79,26 @@ export class ConversationsService {
       }),
     );
 
+    return result;
+  }
+
+  async findByPharmacist(pharmacistId: string): Promise<any[]> {
+    const conversations = await this.conversationModel
+      .find({ pharmacistId: new Types.ObjectId(pharmacistId) })
+      .populate('patientId', 'nom prenom email')
+      .sort({ lastMessageTime: -1 })
+      .lean();
+
+    const result = await Promise.all(
+      conversations.map(async (conv) => {
+        const unreadCount = await this.messageModel.countDocuments({
+          conversationId: conv._id,
+          receiverId: new Types.ObjectId(pharmacistId),
+          isRead: false,
+        });
+        return { ...conv, unreadCount };
+      }),
+    );
     return result;
   }
 

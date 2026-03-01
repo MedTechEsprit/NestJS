@@ -1,21 +1,21 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  IsArray,
   IsDate,
   IsEmail,
   IsEnum,
   IsNotEmpty,
-  IsNumber,
   IsOptional,
   IsString,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { TypeDiabete } from '../../common/enums/type-diabete.enum';
 import { Sexe } from '../../common/enums/sexe.enum';
+import { ProfilMedicalDto } from './profil-medical.dto';
 
 export class CreatePatientDto {
-  // Champs User de base
+  // ── Champs User de base ────────────────────────────────────────
   @ApiProperty({ example: 'Dupont', description: 'Nom du patient' })
   @IsString()
   @IsNotEmpty({ message: 'Le nom est requis' })
@@ -28,7 +28,7 @@ export class CreatePatientDto {
 
   @ApiProperty({ example: 'patient@example.com', description: 'Email du patient' })
   @IsEmail({}, { message: 'Email invalide' })
-  @IsNotEmpty({ message: 'L\'email est requis' })
+  @IsNotEmpty({ message: "L'email est requis" })
   email: string;
 
   @ApiProperty({ example: 'password123', description: 'Mot de passe' })
@@ -47,7 +47,7 @@ export class CreatePatientDto {
   @IsString()
   photoProfil?: string;
 
-  // Champs spécifiques Patient
+  // ── Informations de base (inscription) ─────────────────────────
   @ApiPropertyOptional({ description: 'Date de naissance' })
   @IsOptional()
   @Type(() => Date)
@@ -59,66 +59,20 @@ export class CreatePatientDto {
   @IsEnum(Sexe)
   sexe?: Sexe;
 
-  @ApiPropertyOptional({ example: 175, description: 'Taille en cm' })
-  @IsOptional()
-  @IsNumber()
-  taille?: number;
-
-  @ApiPropertyOptional({ example: 70, description: 'Poids en kg' })
-  @IsOptional()
-  @IsNumber()
-  poids?: number;
-
   @ApiPropertyOptional({ enum: TypeDiabete, description: 'Type de diabète' })
   @IsOptional()
   @IsEnum(TypeDiabete)
   typeDiabete?: TypeDiabete;
 
-  @ApiPropertyOptional({ description: 'Date de diagnostic du diabète' })
-  @IsOptional()
-  @Type(() => Date)
-  @IsDate()
-  dateDiagnostic?: Date;
-
-  @ApiPropertyOptional({ description: 'Liste des allergies', type: [String] })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  allergies?: string[];
-
-  @ApiPropertyOptional({ description: 'Liste des maladies chroniques', type: [String] })
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  maladiesChroniques?: string[];
-
-  @ApiPropertyOptional({ example: 70, description: 'Objectif glycémie minimum (mg/dL)' })
-  @IsOptional()
-  @IsNumber()
-  objectifGlycemieMin?: number;
-
-  @ApiPropertyOptional({ example: 130, description: 'Objectif glycémie maximum (mg/dL)' })
-  @IsOptional()
-  @IsNumber()
-  objectifGlycemieMax?: number;
-
-  @ApiPropertyOptional({ description: 'Traitement actuel' })
+  @ApiPropertyOptional({ example: 'A+', description: 'Groupe sanguin' })
   @IsOptional()
   @IsString()
-  traitementActuel?: string;
+  groupeSanguin?: string;
 
-  @ApiPropertyOptional({ description: 'Type d\'insuline utilisé' })
+  // ── Sous-document profil médical ───────────────────────────────
+  @ApiPropertyOptional({ description: 'Profil médical détaillé', type: ProfilMedicalDto })
   @IsOptional()
-  @IsString()
-  typeInsuline?: string;
-
-  @ApiPropertyOptional({ example: 3, description: 'Fréquence d\'injection par jour' })
-  @IsOptional()
-  @IsNumber()
-  frequenceInjection?: number;
-
-  @ApiPropertyOptional({ example: 'Modéré', description: 'Niveau d\'activité physique' })
-  @IsOptional()
-  @IsString()
-  niveauActivitePhysique?: string;
+  @ValidateNested()
+  @Type(() => ProfilMedicalDto)
+  profilMedical?: ProfilMedicalDto;
 }

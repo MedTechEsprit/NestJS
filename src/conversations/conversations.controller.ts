@@ -43,6 +43,12 @@ export class ConversationsController {
     return this.conversationsService.findByDoctor(doctorId);
   }
 
+  @Get('pharmacists/:pharmacistId/conversations')
+  @ApiOperation({ summary: 'Get all conversations for a pharmacist with unread count' })
+  findByPharmacist(@Param('pharmacistId') pharmacistId: string) {
+    return this.conversationsService.findByPharmacist(pharmacistId);
+  }
+
   @Get('conversations/:id/messages')
   @ApiOperation({ summary: 'Get paginated messages for a conversation' })
   @ApiQuery({ name: 'page', required: false, type: Number })

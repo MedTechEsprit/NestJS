@@ -179,6 +179,18 @@ export class MedecinsService {
     return { message: 'Médecin supprimé avec succès' };
   }
 
+  async getMyDoctors(patientId: string): Promise<any[]> {
+    const doctors = await this.userModel
+      .find({
+        role: { $regex: '^medecin$', $options: 'i' },
+        listePatients: new Types.ObjectId(patientId),
+      })
+      .select('nom prenom email telephone specialite clinique adresseCabinet description noteMoyenne photoProfil')
+      .lean()
+      .exec();
+    return doctors;
+  }
+
   async addPatient(medecinId: string, patientId: string): Promise<Partial<Medecin>> {
     // Verify doctor exists
     const medecin = await this.userModel

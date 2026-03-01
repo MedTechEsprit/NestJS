@@ -51,4 +51,10 @@ export class PatientRequestsController {
   ) {
     return this.patientRequestsService.create(patientId, createDto);
   }
+
+  @Get('patients/:patientId/my-requests')
+  @ApiOperation({ summary: 'Get all requests sent by a patient' })
+  findByPatient(@Param('patientId') patientId: string) {
+    return this.patientRequestsService.findByPatient(patientId);
+  }
 }

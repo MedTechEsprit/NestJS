@@ -104,15 +104,6 @@ export class PatientsService {
       throw new NotFoundException('Patient non trouvé');
     }
 
-    // Hasher le nouveau mot de passe si fourni
-    if (updatePatientDto.motDePasse) {
-      const saltRounds = 10;
-      updatePatientDto.motDePasse = await bcrypt.hash(
-        updatePatientDto.motDePasse,
-        saltRounds,
-      );
-    }
-
     const updatedPatient = await this.patientModel
       .findByIdAndUpdate(id, updatePatientDto, { new: true })
       .select('-motDePasse')

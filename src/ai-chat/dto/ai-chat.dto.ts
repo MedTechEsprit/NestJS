@@ -1,13 +1,16 @@
-import { IsString, IsNotEmpty, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, MinLength, MaxLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class AiChatDto {
   @ApiProperty({
-    description: 'Message sent by the user to the AI assistant',
-    example: 'My glucose has been high lately, what should I do?',
+    description: 'Question sur le diabète ou la nutrition uniquement',
+    example: 'Ma glycémie est à 180 mg/dL après mon repas, est-ce normal ?',
+    minLength: 2,
+    maxLength: 1000,
   })
   @IsString()
-  @IsNotEmpty({ message: 'user_message must not be empty' })
-  @MaxLength(2000)
-  user_message: string;
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(1000)
+  message: string;
 }

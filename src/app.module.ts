@@ -25,6 +25,11 @@ import { ScheduleModule } from '@nestjs/schedule/dist/schedule.module';
 import { RatingsModule } from './ratings/ratings.module';
 import { AiChatModule } from './ai-chat/ai-chat.module';
 import { AiFoodAnalyzerModule } from './ai-food-analyzer/ai-food-analyzer.module';
+import { AiPredictionModule } from './ai-prediction/ai-prediction.module';
+import { AiDoctorModule } from './ai-doctor/ai-doctor.module';
+import { AiPatternModule } from './ai-pattern/ai-pattern.module';
+import { ProductsModule } from './products/products.module';
+import { OrdersModule } from './orders/orders.module';
 
 @Module({
   imports: [
@@ -56,6 +61,11 @@ import { AiFoodAnalyzerModule } from './ai-food-analyzer/ai-food-analyzer.module
     CronModule,
     AiChatModule,
     AiFoodAnalyzerModule,
+    AiPredictionModule,
+    AiDoctorModule,
+    AiPatternModule,
+    ProductsModule,
+    OrdersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

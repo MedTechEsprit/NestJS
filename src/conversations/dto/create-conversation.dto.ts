@@ -1,4 +1,4 @@
-import { IsMongoId, IsNotEmpty } from 'class-validator';
+import { IsMongoId, IsNotEmpty, IsOptional, IsEnum } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateConversationDto {
@@ -7,8 +7,18 @@ export class CreateConversationDto {
   @IsNotEmpty()
   patientId: string;
 
-  @ApiProperty({ description: 'Doctor ID' })
+  @ApiProperty({ description: 'Doctor ID', required: false })
   @IsMongoId()
-  @IsNotEmpty()
-  doctorId: string;
+  @IsOptional()
+  doctorId?: string;
+
+  @ApiProperty({ description: 'Pharmacist ID', required: false })
+  @IsMongoId()
+  @IsOptional()
+  pharmacistId?: string;
+
+  @ApiProperty({ description: 'Conversation type', enum: ['doctor', 'pharmacist'], required: false })
+  @IsEnum(['doctor', 'pharmacist'])
+  @IsOptional()
+  type?: string;
 }

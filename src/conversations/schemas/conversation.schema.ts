@@ -8,8 +8,14 @@ export class Conversation {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   patientId: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
+  @Prop({ type: Types.ObjectId, ref: 'User', index: true })
   doctorId: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', index: true })
+  pharmacistId: Types.ObjectId;
+
+  @Prop({ type: String, enum: ['doctor', 'pharmacist'], default: 'doctor' })
+  type: string;
 
   @Prop({ type: String, default: '' })
   lastMessage: string;
@@ -20,5 +26,11 @@ export class Conversation {
 
 export const ConversationSchema = SchemaFactory.createForClass(Conversation);
 
-// Unique compound index to ensure one conversation per patient-doctor pair
-ConversationSchema.index({ patientId: 1, doctorId: 1 }, { unique: true });
+ConversationSchema.index(
+  { patientId: 1, doctorId: 1 },
+  { unique: true, partialFilterExpression: { doctorId: { $exists: true, $ne: null } } },
+);
+ConversationSchema.index(
+  { patientId: 1, pharmacistId: 1 },
+  { unique: true, partialFilterExpression: { pharmacistId: { $exists: true, $ne: null } } },
+);

@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, Query, UseGuards } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -20,6 +20,59 @@ import type { UserDocument } from '../users/schemas/user.schema';
 @Controller('ai-food-analyzer')
 export class AiFoodAnalyzerController {
   constructor(private readonly aiFoodAnalyzerService: AiFoodAnalyzerService) {}
+
+  // ── GET /ai-food-analyzer/history ──────────────────────────────────────
+
+  @Get('history')
+  @Roles(Role.PATIENT)
+  @ApiOperation({
+    summary: 'Get my AI food analysis history (patient)',
+    description: 'Returns a paginated list of all AI food analyses for the connected patient, sorted by most recent first.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated AI analysis history',
+    schema: {
+      example: {
+        data: [],
+        total: 0,
+        page: 1,
+        limit: 10,
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async getHistory(
+    @CurrentUser('_id') patientId: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.aiFoodAnalyzerService.findHistory(
+      patientId,
+      Number(page) || 1,
+      Number(limit) || 10,
+    );
+  }
+
+  // ── GET /ai-food-analyzer/meal/:mealId ───────────────────────────────────
+
+  @Get('meal/:mealId')
+  @Roles(Role.PATIENT, Role.MEDECIN)
+  @ApiOperation({
+    summary: 'Get AI analysis linked to a specific meal',
+    description: 'Returns the full AiFoodAnalysis document for the given meal ID. Only analyses created by the AI Food Analyzer endpoint are available.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'AI analysis document',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'No AI analysis found for this meal' })
+  async findByMeal(@Param('mealId') mealId: string) {
+    return this.aiFoodAnalyzerService.findByMeal(mealId);
+  }
+
+  // ── POST /ai-food-analyzer ───────────────────────────────────────────────
 
   @Post()
   @Roles(Role.PATIENT)

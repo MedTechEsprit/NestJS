@@ -9,6 +9,12 @@ export enum GlucosePeriod {
   BEFORE_MEAL = 'before_meal',
   AFTER_MEAL = 'after_meal',
   BEDTIME = 'bedtime',
+  RANDOM = 'random',
+}
+
+export enum GlucoseUnit {
+  MG_DL = 'mg/dL',
+  MMOL_L = 'mmol/L',
 }
 
 @Schema({ timestamps: true })
@@ -28,6 +34,10 @@ export class Glucose {
   @ApiProperty({ enum: GlucosePeriod, description: 'Période de mesure' })
   @Prop({ enum: GlucosePeriod })
   period?: GlucosePeriod;
+
+  @ApiProperty({ enum: GlucoseUnit, description: 'Unité de mesure' })
+  @Prop({ enum: GlucoseUnit, default: GlucoseUnit.MG_DL })
+  unit: GlucoseUnit;
 
   @ApiProperty({ description: 'Note optionnelle' })
   @Prop()

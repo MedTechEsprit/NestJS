@@ -42,6 +42,14 @@ export class MedecinsController {
     return this.medecinsService.findAll(paginationDto, specialite);
   }
 
+  @Get('patient/:patientId/my-doctors')
+  @Roles(Role.PATIENT)
+  @ApiOperation({ summary: 'Get all doctors for a patient (where patient is in listePatients)' })
+  @ApiResponse({ status: 200, description: 'Liste des médecins du patient' })
+  getMyDoctors(@Param('patientId') patientId: string) {
+    return this.medecinsService.getMyDoctors(patientId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Récupérer un médecin par son ID' })
   @ApiResponse({ status: 200, description: 'Médecin trouvé' })
