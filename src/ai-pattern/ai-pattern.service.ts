@@ -18,7 +18,7 @@ const OLLAMA_MODEL = 'llava:latest';
 const RECORDS_LIMIT = 500;
 const MEALS_LIMIT = 200;
 const MIN_RECORDS_REQUIRED = 10;
-const OLLAMA_TIMEOUT = 60_000;
+const OLLAMA_TIMEOUT = 240_000;
 
 const PATTERN_SYSTEM_PROMPT =
   `You are an expert endocrinologist and data analyst ` +
@@ -65,10 +65,79 @@ export class AiPatternService {
     return diffDays >= fromDay - 1 && diffDays <= toDay - 1;
   }
 
-  private parseOllamaJson(text: string): any {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('No JSON found in Ollama response');
-    return JSON.parse(match[0]);
+  private parseOllamaJson(text: string, logContext = ''): any {
+    this.logger.debug(`[parseOllamaJson${logContext}] raw length=${text.length}, first 300 chars: ${text.slice(0, 300)}`);
+
+    let cleaned = text;
+
+    // 1. Strip markdown code fences
+    cleaned = cleaned.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
+
+    // 2. Strip // line comments (outside strings — approximate but covers LLM output)
+    cleaned = cleaned.replace(/\/\/[^\n]*/g, '');
+
+    // 3. Strip /* */ block comments
+    cleaned = cleaned.replace(/\/\*[\s\S]*?\*\//g, '');
+
+    // 4. Extract outermost { ... } block
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error(`No JSON object found. Raw snippet: ${text.slice(0, 200)}`);
+    }
+    cleaned = cleaned.slice(start, end + 1);
+
+    // 5. Fix trailing commas before } or ]
+    cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
+
+    // 6. Strip ANY non-JSON text after a bare numeric JSON value
+    //    Only matches when the number is a direct value (after "key": N ...)
+    //    NOT inside a string. Examples fixed:
+    //      "avgSpikeValue": 205 mg/dL   → "avgSpikeValue": 205
+    //      "frequency": 8 spikes detected → "frequency": 8
+    //      "hba1cEstimate": 7.2 (est.)  → "hba1cEstimate": 7.2
+    //    Does NOT corrupt "avgTimeOfOccurrence": "04:30 AM"
+    cleaned = cleaned.replace(
+      /("[\w]+")\s*:\s*(\d+(?:\.\d+)?)\s+[^,}\]\n"]+/g,
+      '$1: $2',
+    );
+
+    // 6. Fix unquoted true/false/null values that may be written as words (already valid JSON,
+    //    but sometimes LLMs write True/False/None — Python style)
+    cleaned = cleaned
+      .replace(/:\s*True\b/g, ': true')
+      .replace(/:\s*False\b/g, ': false')
+      .replace(/:\s*None\b/g, ': null');
+
+    // 7. Fix single-quoted string keys and values
+    cleaned = cleaned.replace(/([{,\[]\s*)'([^'\\]*(?:\\.[^'\\]*)*)'\s*:/g, '$1"$2":');
+    cleaned = cleaned.replace(/:\s*'([^'\\]*(?:\\.[^'\\]*)*)'/g, ': "$1"');
+
+    // 8. Collapse literal newlines inside string values (between opening " and closing ")
+    //    Replace \n inside strings with \\n so JSON.parse accepts it
+    cleaned = cleaned.replace(/"((?:[^"\\]|\\.)*)"/gs, (_, inner: string) => {
+      const escaped = inner
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r')
+        .replace(/\t/g, '\\t');
+      return `"${escaped}"`;
+    });
+
+    // 9. First parse attempt
+    try {
+      return JSON.parse(cleaned);
+    } catch (e1) {
+      this.logger.debug(`[parseOllamaJson] first parse failed: ${(e1 as Error).message}. Cleaned snippet: ${cleaned.slice(0, 400)}`);
+    }
+
+    // 10. Second attempt: strip all control characters except standard whitespace
+    const sanitized = cleaned.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+    try {
+      return JSON.parse(sanitized);
+    } catch (e2) {
+      this.logger.warn(`[parseOllamaJson] both parse attempts failed: ${(e2 as Error).message}`);
+      throw e2;
+    }
   }
 
   // ── Main: analyzePatterns ────────────────────────────────────────────────
@@ -376,7 +445,7 @@ export class AiPatternService {
       );
       const text = ((data as any).response ?? '').trim();
       if (!text) throw new Error('Empty response from Ollama');
-      parsedResult = this.parseOllamaJson(text);
+      parsedResult = this.parseOllamaJson(text, ` patient=${patientId}`);
     } catch (err) {
       this.logger.warn(
         `Ollama unavailable, using fallback pattern analysis: ${String(err)}`,
