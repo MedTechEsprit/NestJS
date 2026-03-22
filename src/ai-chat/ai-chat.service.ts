@@ -2,108 +2,273 @@ import {
   Injectable,
   HttpException,
   HttpStatus,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import axios, { AxiosError } from 'axios';
 import { GlucoseService } from '../glucose/glucose.service';
+import { NutritionService } from '../nutrition/nutrition.service';
+import { PaginatedResult } from '../common/dto/pagination.dto';
+import { Meal } from '../nutrition/schemas/meal.schema';
 
-const FASTAPI_URL = 'http://127.0.0.1:8001/chat';
-const GLUCOSE_FETCH_LIMIT = 100; // last 100 records sent as context
+const OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://localhost:11434/api/generate';
+const OLLAMA_MODEL = 'llava:13b';
+const GLUCOSE_RECORDS_LIMIT = 20;
+const MEALS_LIMIT = 10;
+
+const SYSTEM_PROMPT_TEMPLATE = `Tu es MediBot, un assistant médical IA chaleureux et compétent, spécialisé dans l'accompagnement des patients diabétiques.
+
+Ton rôle :
+- Répondre à TOUTES les questions liées au diabète, à la glycémie, à l'insuline, à la nutrition, aux repas, au sport, au mode de vie, au stress, au sommeil, et à la santé en général des diabétiques.
+- Utiliser les données réelles du patient ci-dessous pour personnaliser tes réponses.
+- Répondre dans la MÊME langue que la question du patient (français, arabe, anglais, etc.).
+- Être encourageant, clair et pratique. Éviter le jargon médical excessif.
+- Préciser que tu ne remplaces pas un médecin quand c'est pertinent.
+- Recommander de consulter un médecin si la glycémie dépasse 250 ou descend sous 60 mg/dL.
+
+Règle unique de refus : si la question n'a AUCUN rapport avec la santé (ex: politique, sport professionnel, programmation, météo, divertissement), réponds : "Je suis spécialisé dans le diabète et la santé. Posez-moi une question sur votre glycémie, nutrition ou traitement !"
+
+--- DONNÉES DU PATIENT ---
+GLYCÉMIE RÉCENTE :
+{GLUCOSE_RECORDS}
+STATISTIQUES GLYCÉMIE :
+{GLUCOSE_STATS}
+REPAS RÉCENTS :
+{RECENT_MEALS}
+STATISTIQUES NUTRITION :
+{NUTRITION_STATS}
+--- FIN DES DONNÉES ---`;
+
+export interface GlucoseStats {
+  average: number;
+  min: number;
+  max: number;
+  hypoglycemiaCount: number;
+  hyperglycemiaCount: number;
+  lastValue: number;
+  lastMeasuredAt: string;
+  trend: string;
+}
+
+export interface NutritionStats {
+  avgDailyCalories: number;
+  avgDailyCarbs: number;
+  avgDailyProtein: number;
+  avgDailyFat: number;
+  totalMealsLogged: number;
+  lastMealName: string;
+  lastMealAt: string;
+  lastMealCarbs: number;
+}
 
 @Injectable()
 export class AiChatService {
   private readonly logger = new Logger(AiChatService.name);
 
-  constructor(private readonly glucoseService: GlucoseService) {}
+  constructor(
+    private readonly glucoseService: GlucoseService,
+    private readonly nutritionService: NutritionService,
+  ) {}
 
   async chat(
-    patientId: string,
-    userMessage: string,
-  ): Promise<{ ai_response: string }> {
-    // 1. Fetch the connected patient's glucose records
-    const glucoseResult = await this.glucoseService.findMyRecords(patientId, {
-      page: 1,
-      limit: GLUCOSE_FETCH_LIMIT,
-    });
+    userId: string,
+    message: string,
+  ): Promise<{
+    response: string;
+    context: {
+      glucoseStats: GlucoseStats | null;
+      nutritionStats: NutritionStats | null;
+      recordsUsed: { glucoseCount: number; mealsCount: number };
+    };
+  }> {
+    // Step 1 — Validate
+    if (!message || message.trim().length < 2) {
+      throw new BadRequestException('Message must be at least 2 characters long.');
+    }
+    if (message.length > 1000) {
+      throw new BadRequestException('Message must not exceed 1000 characters.');
+    }
 
-    const glucoseRecords = glucoseResult.data.map((record) => ({
-      value: record.value,
-      measuredAt: record.measuredAt,
-      period: record.period ?? null,
-      note: record.note ?? null,
-    }));
+    // Step 2 — Fetch patient data in parallel
+    const [glucoseResult, mealsResult] = await Promise.all([
+      this.glucoseService
+        .findMyRecords(userId, { page: 1, limit: GLUCOSE_RECORDS_LIMIT })
+        .catch(() => ({ data: [] as any[] })),
+      this.nutritionService
+        .findAllMeals(userId, undefined, undefined, { page: 1, limit: MEALS_LIMIT })
+        .catch(() => ({ data: [] as any[] })),
+    ]);
 
-    // 2. Call the FastAPI server
-    let rawData: unknown;
+    const glucoseRecords: { value: number; measuredAt: Date; period: string | null }[] =
+      Array.isArray((glucoseResult as any).data) ? (glucoseResult as any).data : [];
+
+    const mealsPaginated = mealsResult as PaginatedResult<Meal>;
+    const meals: Meal[] = Array.isArray(mealsPaginated.data) ? mealsPaginated.data : [];
+
+    // Step 3 — Compute stats
+    const glucoseStats = this.computeGlucoseStats(glucoseRecords);
+    const nutritionStats = this.computeNutritionStats(meals);
+
+    // Step 4 — Build context texts
+    const glucoseRecordsText =
+      glucoseRecords.length > 0
+        ? glucoseRecords
+            .map(
+              (r) =>
+                `${r.value} mg/dL (${r.period ?? 'unknown'}, ${new Date(r.measuredAt).toLocaleDateString()})`,
+            )
+            .join(' | ')
+        : 'No glucose records available yet.';
+
+    const recentMealsText =
+      meals.length > 0
+        ? meals
+            .map(
+              (m) =>
+                `${m.name}: ${m.calories ?? 0}kcal, ${m.carbs}g carbs` +
+                ` (${new Date((m as any).eatenAt).toLocaleDateString()})`,
+            )
+            .join(' | ')
+        : 'No meals logged yet.';
+
+    const glucoseStatsText = glucoseStats
+      ? `Average: ${glucoseStats.average} mg/dL | Last: ${glucoseStats.lastValue} mg/dL | ` +
+        `Min: ${glucoseStats.min} | Max: ${glucoseStats.max} | ` +
+        `Hypo episodes (<70): ${glucoseStats.hypoglycemiaCount} | ` +
+        `Hyper episodes (>180): ${glucoseStats.hyperglycemiaCount} | ` +
+        `Trend: ${glucoseStats.trend}`
+      : 'No glucose statistics available yet.';
+
+    const nutritionStatsText = nutritionStats
+      ? `Avg daily calories: ${nutritionStats.avgDailyCalories} kcal | ` +
+        `Avg daily carbs: ${nutritionStats.avgDailyCarbs}g | ` +
+        `Avg daily protein: ${nutritionStats.avgDailyProtein}g | ` +
+        `Last meal: "${nutritionStats.lastMealName}" (${nutritionStats.lastMealCarbs}g carbs)`
+      : 'No nutrition statistics available yet.';
+
+    // Step 5 — Inject data into system prompt
+    const systemPrompt = SYSTEM_PROMPT_TEMPLATE
+      .replace('{GLUCOSE_RECORDS}', glucoseRecordsText)
+      .replace('{GLUCOSE_STATS}', glucoseStatsText)
+      .replace('{RECENT_MEALS}', recentMealsText)
+      .replace('{NUTRITION_STATS}', nutritionStatsText);
+
+    // Step 6 — Call Ollama
+    let aiResponse: string;
     try {
       const { data } = await axios.post(
-        FASTAPI_URL,
-        {
-          user_message: userMessage,
-          glucose_records: glucoseRecords,
-        },
-        {
-          timeout: 30_000, // 30 seconds
-          headers: { 'Content-Type': 'application/json' },
-        },
+        OLLAMA_URL,
+        { model: OLLAMA_MODEL, system: systemPrompt, prompt: message, stream: false },
+        { timeout: 240_000, headers: { 'Content-Type': 'application/json' } },
       );
-      rawData = data;
+      aiResponse = ((data as { response?: string }).response ?? '').trim();
+      if (!aiResponse) throw new Error('Empty response from Ollama');
     } catch (error) {
       if (axios.isAxiosError(error)) {
         const axiosErr = error as AxiosError;
-        if (!axiosErr.response) {
-          // Network / unreachable
-          this.logger.error(`FastAPI unreachable: ${axiosErr.message}`);
+        if (!axiosErr.response || axiosErr.code === 'ECONNREFUSED') {
+          this.logger.error(`Ollama unreachable: ${axiosErr.code} — ${axiosErr.message}`);
           throw new HttpException(
-            'AI service is currently unavailable. Please try again later.',
+            "Le service IA (Ollama) n'est pas disponible. Vérifiez qu'Ollama tourne sur http://localhost:11434.",
             HttpStatus.SERVICE_UNAVAILABLE,
           );
         }
-        // FastAPI returned a non-2xx status
+        if (axiosErr.code === 'ECONNABORTED') {
+          this.logger.error(`Ollama timeout: ${axiosErr.message}`);
+          throw new HttpException(
+            'Le service IA est temporairement indisponible. Réessayez dans quelques instants.',
+            HttpStatus.SERVICE_UNAVAILABLE,
+          );
+        }
         this.logger.error(
-          `FastAPI returned ${axiosErr.response.status}: ${JSON.stringify(axiosErr.response.data)}`,
+          `Ollama HTTP ${axiosErr.response.status}: ${JSON.stringify(axiosErr.response.data)}`,
         );
         throw new HttpException(
-          'AI service returned an error. Please try again later.',
-          HttpStatus.BAD_GATEWAY,
+          'Le service IA a retourné une erreur. Réessayez dans quelques instants.',
+          HttpStatus.SERVICE_UNAVAILABLE,
         );
       }
-      // Unexpected error
-      this.logger.error(`Unexpected error calling FastAPI: ${error}`);
-      throw new HttpException(
-        'An unexpected error occurred.',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+      this.logger.error(`Unexpected Ollama error: ${String(error)}`);
+      throw new HttpException('Une erreur inattendue est survenue.', HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
-    // 3. Extract the AI text — handle several possible response shapes:
-    //    { "response": "..." }  – expected
-    //    { "message": "..." }   – common alternative
-    //    "..."                  – plain string body
-    this.logger.debug(`FastAPI raw response: ${JSON.stringify(rawData)}`);
+    // Step 7 — Return
+    return {
+      response: aiResponse,
+      context: {
+        glucoseStats,
+        nutritionStats,
+        recordsUsed: {
+          glucoseCount: glucoseRecords.length,
+          mealsCount: meals.length,
+        },
+      },
+    };
+  }
 
-    let aiText: string | undefined;
+  // ── Private helpers ─────────────────────────────────────────────────────
 
-    if (typeof rawData === 'string' && rawData.trim() !== '') {
-      aiText = rawData.trim();
-    } else if (rawData && typeof rawData === 'object') {
-      const obj = rawData as Record<string, unknown>;
-      const candidate = obj['response'] ?? obj['message'] ?? obj['answer'] ?? obj['text'];
-      if (typeof candidate === 'string' && candidate.trim() !== '') {
-        aiText = candidate.trim();
-      }
+  private computeGlucoseStats(
+    records: { value: number; measuredAt: Date; period: string | null }[],
+  ): GlucoseStats | null {
+    if (records.length === 0) return null;
+
+    const values = records.map((r) => r.value);
+    const average = Math.round(values.reduce((a, b) => a + b, 0) / values.length);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const hypoglycemiaCount = values.filter((v) => v < 70).length;
+    const hyperglycemiaCount = values.filter((v) => v > 180).length;
+
+    const sorted = [...records].sort(
+      (a, b) => new Date(b.measuredAt).getTime() - new Date(a.measuredAt).getTime(),
+    );
+    const latest = sorted[0];
+
+    // Trend: compare avg of older half vs newer half of records
+    const half = Math.floor(values.length / 2);
+    let trend = 'stable';
+    if (values.length >= 4) {
+      const olderAvg =
+        values.slice(half).reduce((a, b) => a + b, 0) / (values.length - half);
+      const newerAvg = values.slice(0, half).reduce((a, b) => a + b, 0) / half;
+      if (newerAvg < olderAvg - 5) trend = 'improving';
+      else if (newerAvg > olderAvg + 5) trend = 'worsening';
     }
 
-    if (!aiText) {
-      this.logger.error(
-        `Could not extract AI text from FastAPI response: ${JSON.stringify(rawData)}`,
-      );
-      throw new HttpException(
-        'AI service returned an invalid response.',
-        HttpStatus.BAD_GATEWAY,
-      );
-    }
+    return {
+      average,
+      min,
+      max,
+      hypoglycemiaCount,
+      hyperglycemiaCount,
+      lastValue: latest.value,
+      lastMeasuredAt: new Date(latest.measuredAt).toLocaleString(),
+      trend,
+    };
+  }
 
-    return { ai_response: aiText };
+  private computeNutritionStats(meals: Meal[]): NutritionStats | null {
+    if (meals.length === 0) return null;
+
+    const totalCalories = meals.reduce((s, m) => s + (m.calories ?? 0), 0);
+    const totalCarbs = meals.reduce((s, m) => s + (m.carbs ?? 0), 0);
+    const totalProtein = meals.reduce((s, m) => s + (m.protein ?? 0), 0);
+    const totalFat = meals.reduce((s, m) => s + (m.fat ?? 0), 0);
+
+    const days =
+      new Set(meals.map((m) => new Date((m as any).eatenAt).toLocaleDateString())).size || 1;
+
+    const last = meals[0]; // sorted by eatenAt desc
+    return {
+      avgDailyCalories: Math.round(totalCalories / days),
+      avgDailyCarbs: Math.round(totalCarbs / days),
+      avgDailyProtein: Math.round(totalProtein / days),
+      avgDailyFat: Math.round(totalFat / days),
+      totalMealsLogged: meals.length,
+      lastMealName: last.name,
+      lastMealAt: new Date((last as any).eatenAt).toLocaleString(),
+      lastMealCarbs: last.carbs ?? 0,
+    };
   }
 }

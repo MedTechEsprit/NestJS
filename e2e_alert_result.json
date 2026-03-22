@@ -1,0 +1,12 @@
+﻿{
+    "doctorEmail":  "doctor.alert.1774205981@example.com",
+    "patientEmail":  "patient.alert.1774205981@example.com",
+    "doctorId":  "69c03c0a07d3b20919e554c6",
+    "patientId":  48076,
+    "requestId":  null,
+    "patientLinked":  false,
+    "glucoseId":  "69c03c1e07d3b20919e55517",
+    "notifCount":  0,
+    "unread":  0,
+    "latest":  null
+}

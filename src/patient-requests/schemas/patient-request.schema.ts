@@ -9,6 +9,12 @@ export enum PatientRequestStatus {
   DECLINED = 'declined',
 }
 
+export enum PatientRequestType {
+  PATIENT_LINK = 'patient_link',
+  ACCESS_RENEWAL = 'access_renewal',
+  ACCESS_CONFIRMATION = 'access_confirmation',
+}
+
 @Schema({ timestamps: true })
 export class PatientRequest {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
@@ -25,6 +31,14 @@ export class PatientRequest {
   })
   status: PatientRequestStatus;
 
+  @Prop({
+    type: String,
+    enum: PatientRequestType,
+    default: PatientRequestType.PATIENT_LINK,
+    index: true,
+  })
+  requestType: PatientRequestType;
+
   @Prop({ type: Date, default: Date.now })
   requestDate: Date;
 
@@ -33,6 +47,15 @@ export class PatientRequest {
 
   @Prop({ type: String })
   declineReason: string;
+
+  @Prop({ type: Date })
+  respondedAt: Date;
+
+  @Prop({ type: String })
+  respondedByRole: string;
+
+  @Prop({ type: Boolean })
+  authorizationEnabled: boolean;
 }
 
 export const PatientRequestSchema = SchemaFactory.createForClass(PatientRequest);
@@ -40,3 +63,4 @@ export const PatientRequestSchema = SchemaFactory.createForClass(PatientRequest)
 // Compound indexes
 PatientRequestSchema.index({ doctorId: 1, status: 1 });
 PatientRequestSchema.index({ patientId: 1, doctorId: 1 });
+PatientRequestSchema.index({ patientId: 1, status: 1, requestType: 1 });

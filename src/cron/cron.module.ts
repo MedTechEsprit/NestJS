@@ -4,6 +4,7 @@ import { CronService } from './cron.service';
 import { MedicationRequest, MedicationRequestSchema } from '../medication-requests/schemas/medication-request.schema';
 import { PharmacyActivity, PharmacyActivitySchema } from '../activities/schemas/pharmacy-activity.schema';
 import { AuthModule } from '../auth/auth.module';
+import { AiPatternModule } from '../ai-pattern/ai-pattern.module';
 
 @Module({
   imports: [
@@ -11,8 +12,8 @@ import { AuthModule } from '../auth/auth.module';
       { name: MedicationRequest.name, schema: MedicationRequestSchema },
       { name: PharmacyActivity.name, schema: PharmacyActivitySchema },
     ]),
-    // Import AuthModule to access Pharmacien discriminator model
     AuthModule,
+    AiPatternModule,
   ],
   providers: [CronService],
   exports: [CronService],

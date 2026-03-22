@@ -256,6 +256,50 @@ export class MedecinsService {
     return updatedMedecin;
   }
 
+  async hasPatientAccess(medecinId: string, patientId: string): Promise<boolean> {
+    const medecin = await this.userModel.collection.findOne({
+      _id: new Types.ObjectId(medecinId),
+      role: { $regex: '^medecin$', $options: 'i' } as any,
+    });
+
+    if (!medecin) {
+      return false;
+    }
+
+    const listePatients = ((medecin as any)?.listePatients || []).map((id: any) => id.toString());
+    const isLinkedPatient = listePatients.includes(patientId);
+
+    if (!isLinkedPatient) {
+      return false;
+    }
+
+    const accessMap = (medecin as any)?.patientAccessMap || {};
+    const explicitAccess = accessMap[patientId];
+
+    return explicitAccess == null ? true : Boolean(explicitAccess);
+  }
+
+  async setPatientAccess(medecinId: string, patientId: string, enabled: boolean): Promise<void> {
+    const medecin = await this.userModel.collection.findOne({
+      _id: new Types.ObjectId(medecinId),
+      role: { $regex: '^medecin$', $options: 'i' } as any,
+    });
+
+    if (!medecin) {
+      throw new NotFoundException('Médecin non trouvé');
+    }
+
+    const listePatients = ((medecin as any)?.listePatients || []).map((id: any) => id.toString());
+    if (!listePatients.includes(patientId)) {
+      throw new NotFoundException('Patient non lié à ce médecin');
+    }
+
+    await this.userModel.collection.updateOne(
+      { _id: new Types.ObjectId(medecinId) },
+      { $set: { [`patientAccessMap.${patientId}`]: enabled } },
+    );
+  }
+
   async updateNote(id: string, note: number): Promise<Partial<Medecin>> {
     const medecin = await this.userModel
       .findOne({
@@ -332,7 +376,7 @@ export class MedecinsService {
     // Get all matching patients
     const patients = await this.userModel
       .find(patientFilter)
-      .select('nom prenom email telephone dateNaissance typeDiabete objectifGlycemieMin objectifGlycemieMax')
+      .select('nom prenom email telephone photoProfil dateNaissance typeDiabete objectifGlycemieMin objectifGlycemieMax')
       .exec();
 
     // Enrich patients with health status
@@ -378,6 +422,7 @@ export class MedecinsService {
           nom: patientObj.nom,
           email: patientObj.email,
           telephone: patientObj.telephone,
+          photoProfil: patientObj.photoProfil,
           dateNaissance: patientObj.dateNaissance,
           age,
           typeDiabete: patientObj.typeDiabete,

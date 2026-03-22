@@ -8,6 +8,7 @@ import {
   Delete,
   UseGuards,
   Query,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -22,6 +23,7 @@ import { UpdatePatientDto } from './dto/update-patient.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Role } from '../common/enums/role.enum';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { TypeDiabete } from '../common/enums/type-diabete.enum';
@@ -86,7 +88,18 @@ export class PatientsController {
   @ApiOperation({ summary: 'Récupérer un patient par son ID' })
   @ApiResponse({ status: 200, description: 'Patient trouvé' })
   @ApiResponse({ status: 404, description: 'Patient non trouvé' })
-  findOne(@Param('id') id: string) {
+  async findOne(
+    @Param('id') id: string,
+    @CurrentUser('_id') userId: string,
+    @CurrentUser('role') userRole: string,
+  ) {
+    if (userRole?.toUpperCase() === Role.MEDECIN.toUpperCase()) {
+      const canAccess = await this.patientsService.canDoctorAccessPatient(userId, id);
+      if (!canAccess) {
+        throw new ForbiddenException('Accès refusé par le patient. Envoyez une demande d\'autorisation.');
+      }
+    }
+
     return this.patientsService.findOne(id);
   }
 

@@ -8,6 +8,8 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
+import { OAuth2Client } from 'google-auth-library';
+import { ConfigService } from '@nestjs/config';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { Patient, PatientDocument } from '../patients/schemas/patient.schema';
 import { Medecin, MedecinDocument } from '../medecins/schemas/medecin.schema';
@@ -19,9 +21,13 @@ import { RegisterPharmacienDto } from './dto/register-pharmacien.dto';
 import { Role } from '../common/enums/role.enum';
 import { StatutCompte } from '../common/enums/statut-compte.enum';
 import { SessionsService } from '../sessions/sessions.service';
+import { GoogleMobileLoginDto } from './dto/google-mobile-login.dto';
 
 @Injectable()
 export class AuthService {
+  private googleClient: OAuth2Client;
+  private googleWebClientId: string | null;
+
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Patient.name) private patientModel: Model<PatientDocument>,
@@ -29,7 +35,23 @@ export class AuthService {
     @InjectModel(Pharmacien.name) private pharmacienModel: Model<PharmacienDocument>,
     private jwtService: JwtService,
     private sessionsService: SessionsService,
+    private configService: ConfigService,
   ) {}
+
+  onModuleInit() {
+    const clientIds = this.configService.get<string>('GOOGLE_OAUTH_CLIENT_IDS') || '';
+    this.googleWebClientId = this.configService.get<string>('GOOGLE_WEB_CLIENT_ID') || null;
+
+    const audience = [
+      ...clientIds
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean),
+      ...(this.googleWebClientId ? [this.googleWebClientId] : []),
+    ];
+
+    this.googleClient = new OAuth2Client(audience.length > 0 ? audience[0] : undefined);
+  }
 
   /**
    * Register a new patient
@@ -173,6 +195,46 @@ export class AuthService {
     return this.generateAuthResponse(user, deviceInfo, ipAddress, userAgent);
   }
 
+  async loginWithGoogleMobile(
+    googleLoginDto: GoogleMobileLoginDto,
+    deviceInfo?: string,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<{ user: Partial<User>; accessToken: string }> {
+    const payload = await this.verifyGoogleIdToken(googleLoginDto.idToken);
+
+    const email = payload.email?.toLowerCase();
+    if (!email) {
+      throw new UnauthorizedException('Impossible de lire l\'email Google');
+    }
+
+    let user = await this.userModel.findOne({ email }).exec();
+    if (!user) {
+      const requestedRole = googleLoginDto.role || Role.PATIENT;
+      if (requestedRole !== Role.PATIENT) {
+        throw new BadRequestException(
+          'La création Google automatique est disponible uniquement pour le rôle PATIENT',
+        );
+      }
+
+      const [prenom, ...nomRest] = (payload.name || '').trim().split(' ').filter(Boolean);
+      const generatedPassword = await this.hashPassword(`google_${payload.sub}_${Date.now()}`);
+
+      const newPatient = new this.patientModel({
+        nom: nomRest.join(' ') || prenom || 'Utilisateur',
+        prenom: prenom || 'Google',
+        email,
+        motDePasse: generatedPassword,
+        photoProfil: payload.picture,
+        statutCompte: StatutCompte.ACTIF,
+      });
+
+      user = await newPatient.save();
+    }
+
+    return this.generateAuthResponse(user, deviceInfo, ipAddress, userAgent);
+  }
+
   async validateUser(userId: string): Promise<UserDocument | null> {
     return this.userModel.findById(userId).exec();
   }
@@ -205,6 +267,40 @@ export class AuthService {
   private async hashPassword(password: string): Promise<string> {
     const saltRounds = 10;
     return bcrypt.hash(password, saltRounds);
+  }
+
+  private async verifyGoogleIdToken(idToken: string) {
+    const configuredClientIds = [
+      ...(this.configService
+        .get<string>('GOOGLE_OAUTH_CLIENT_IDS', '')
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean)),
+      ...(this.googleWebClientId ? [this.googleWebClientId] : []),
+    ];
+
+    if (configuredClientIds.length === 0) {
+      throw new BadRequestException(
+        'Configuration Google manquante: GOOGLE_WEB_CLIENT_ID ou GOOGLE_OAUTH_CLIENT_IDS',
+      );
+    }
+
+    try {
+      const ticket = await this.googleClient.verifyIdToken({
+        idToken,
+        audience: configuredClientIds,
+      });
+
+      const payload = ticket.getPayload();
+
+      if (!payload || !payload.email_verified) {
+        throw new UnauthorizedException('Token Google invalide ou email non vérifié');
+      }
+
+      return payload;
+    } catch {
+      throw new UnauthorizedException('Token Google invalide');
+    }
   }
 
   /**

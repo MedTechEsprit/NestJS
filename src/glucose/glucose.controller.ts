@@ -8,6 +8,7 @@ import {
   Delete,
   UseGuards,
   Query,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -152,10 +153,15 @@ export class GlucoseController {
   @Roles(Role.MEDECIN)
   @ApiOperation({ summary: 'Récupérer les enregistrements de glycémie d\'un patient (Médecin)' })
   @ApiResponse({ status: 200, description: 'Liste des enregistrements du patient' })
-  findPatientRecords(
+  async findPatientRecords(
     @Param('patientId') patientId: string,
+    @CurrentUser('_id') doctorId: string,
     @Query() paginationDto: PaginationDto,
   ) {
+    const canAccess = await this.glucoseService.canDoctorAccessPatient(doctorId, patientId);
+    if (!canAccess) {
+      throw new ForbiddenException('Accès glycémie refusé par le patient. Envoyez une demande d\'autorisation.');
+    }
     return this.glucoseService.findMyRecords(patientId, paginationDto);
   }
 
