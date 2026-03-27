@@ -2,15 +2,119 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Glucose, GlucoseDocument } from './schemas/glucose.schema';
+import { User, UserDocument } from '../users/schemas/user.schema';
 import { CreateGlucoseDto } from './dto/create-glucose.dto';
 import { UpdateGlucoseDto } from './dto/update-glucose.dto';
 import { PaginationDto, PaginatedResult } from '../common/dto/pagination.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationSeverity, NotificationType } from '../notifications/schemas/notification.schema';
 
 @Injectable()
 export class GlucoseService {
   constructor(
     @InjectModel(Glucose.name) private glucoseModel: Model<GlucoseDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
+    private readonly notificationsService: NotificationsService,
   ) {}
+
+  private toMgDl(value: number, unit?: string): number {
+    if ((unit || '').toLowerCase() == 'mmol/l') {
+      return value * 18;
+    }
+    return value;
+  }
+
+  private evaluateAlert(valueMgDl: number): {
+    isAbnormal: boolean;
+    severity: NotificationSeverity;
+    title: string;
+    message: string;
+  } {
+    if (valueMgDl < 54) {
+      return {
+        isAbnormal: true,
+        severity: NotificationSeverity.CRITICAL,
+        title: 'Alerte glycémie critique basse',
+        message: `Hypoglycémie sévère détectée: ${Math.round(valueMgDl)} mg/dL`,
+      };
+    }
+
+    if (valueMgDl < 70) {
+      return {
+        isAbnormal: true,
+        severity: NotificationSeverity.WARNING,
+        title: 'Alerte glycémie basse',
+        message: `Hypoglycémie détectée: ${Math.round(valueMgDl)} mg/dL`,
+      };
+    }
+
+    if (valueMgDl > 250) {
+      return {
+        isAbnormal: true,
+        severity: NotificationSeverity.CRITICAL,
+        title: 'Alerte glycémie critique élevée',
+        message: `Hyperglycémie sévère détectée: ${Math.round(valueMgDl)} mg/dL`,
+      };
+    }
+
+    if (valueMgDl > 180) {
+      return {
+        isAbnormal: true,
+        severity: NotificationSeverity.WARNING,
+        title: 'Alerte glycémie élevée',
+        message: `Hyperglycémie détectée: ${Math.round(valueMgDl)} mg/dL`,
+      };
+    }
+
+    return {
+      isAbnormal: false,
+      severity: NotificationSeverity.INFO,
+      title: '',
+      message: '',
+    };
+  }
+
+  private async findAuthorizedDoctorIds(patientId: string): Promise<string[]> {
+    const patientObjectId = new Types.ObjectId(patientId);
+    const doctors = await this.userModel.collection
+      .find({
+        role: { $regex: '^medecin$', $options: 'i' } as any,
+        listePatients: patientObjectId,
+      })
+      .project({ _id: 1, patientAccessMap: 1 })
+      .toArray();
+
+    return doctors
+      .filter((doctor: any) => {
+        const accessMap = doctor?.patientAccessMap || {};
+        const explicitAccess = accessMap[patientId];
+        return explicitAccess == null ? true : Boolean(explicitAccess);
+      })
+      .map((doctor: any) => doctor._id.toString());
+  }
+
+  async canDoctorAccessPatient(doctorId: string, patientId: string): Promise<boolean> {
+    const doctor = await this.userModel.collection.findOne({
+      _id: new Types.ObjectId(doctorId),
+      role: { $regex: '^medecin$', $options: 'i' } as any,
+    });
+
+    if (!doctor) {
+      return false;
+    }
+
+    const linkedPatients = ((doctor as any)?.listePatients || []).map((id: any) => id.toString());
+    const isLinked = linkedPatients.includes(patientId);
+
+    if (!isLinked) {
+      return false;
+    }
+
+    const accessMap = (doctor as any)?.patientAccessMap || {};
+    const explicitAccess = accessMap[patientId];
+
+    return explicitAccess == null ? true : Boolean(explicitAccess);
+  }
 
   async create(patientId: string, createGlucoseDto: CreateGlucoseDto): Promise<Glucose> {
     const newGlucose = new this.glucoseModel({
@@ -18,7 +122,42 @@ export class GlucoseService {
       patientId: new Types.ObjectId(patientId),
     });
 
-    return await newGlucose.save();
+    const savedGlucose = await newGlucose.save();
+
+    try {
+      const valueMgDl = this.toMgDl(createGlucoseDto.value, createGlucoseDto.unit);
+      const alert = this.evaluateAlert(valueMgDl);
+
+      if (alert.isAbnormal) {
+        const [doctorIds, patient] = await Promise.all([
+          this.findAuthorizedDoctorIds(patientId),
+          this.userModel.findById(patientId).select('nom prenom').lean(),
+        ]);
+
+        if (doctorIds.length > 0) {
+          const patientFullName = `${patient?.prenom || ''} ${patient?.nom || ''}`.trim() || 'Patient';
+          const measuredAtLabel = new Date(createGlucoseDto.measuredAt).toLocaleString('fr-FR');
+          const fullMessage = `${patientFullName}: ${alert.message} (${measuredAtLabel})`;
+
+          await Promise.all(
+            doctorIds.map((doctorId) =>
+              this.notificationsService.send(
+                doctorId,
+                NotificationType.PATIENT_ALERT,
+                alert.title,
+                fullMessage,
+                savedGlucose._id.toString(),
+                alert.severity,
+              ),
+            ),
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Failed to dispatch glucose alert notifications:', error);
+    }
+
+    return savedGlucose;
   }
 
   async findMyRecords(

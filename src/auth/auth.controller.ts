@@ -19,6 +19,7 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterPatientDto } from './dto/register-patient.dto';
 import { RegisterMedecinDto } from './dto/register-medecin.dto';
 import { RegisterPharmacienDto } from './dto/register-pharmacien.dto';
+import { GoogleMobileLoginDto } from './dto/google-mobile-login.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { UserDocument } from '../users/schemas/user.schema';
@@ -76,6 +77,24 @@ export class AuthController {
     const userAgent = request.headers['user-agent'];
 
     return this.authService.login(loginDto, deviceInfo, ipAddress, userAgent);
+  }
+
+  @Post('google/mobile')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Connexion mobile avec Google ID token' })
+  @ApiResponse({ status: 200, description: 'Connexion Google réussie' })
+  @ApiResponse({ status: 401, description: 'Token Google invalide' })
+  async loginWithGoogleMobile(@Body() googleLoginDto: GoogleMobileLoginDto, @Req() request: Request) {
+    const deviceInfo = this.extractDeviceInfo(request);
+    const ipAddress = this.extractIpAddress(request);
+    const userAgent = request.headers['user-agent'];
+
+    return this.authService.loginWithGoogleMobile(
+      googleLoginDto,
+      deviceInfo,
+      ipAddress,
+      userAgent,
+    );
   }
 
   @Get('profile')

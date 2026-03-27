@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { Patient, PatientDocument } from './schemas/patient.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
@@ -194,5 +194,28 @@ export class PatientsService {
       limit,
       totalPages: Math.ceil(total / limit),
     };
+  }
+
+  async canDoctorAccessPatient(doctorId: string, patientId: string): Promise<boolean> {
+    const doctor = await this.userModel.collection.findOne({
+      _id: new Types.ObjectId(doctorId),
+      role: { $regex: '^medecin$', $options: 'i' } as any,
+    });
+
+    if (!doctor) {
+      return false;
+    }
+
+    const linkedPatients = ((doctor as any)?.listePatients || []).map((id: any) => id.toString());
+    const isLinked = linkedPatients.includes(patientId);
+
+    if (!isLinked) {
+      return false;
+    }
+
+    const accessMap = (doctor as any)?.patientAccessMap || {};
+    const explicitAccess = accessMap[patientId];
+
+    return explicitAccess == null ? true : Boolean(explicitAccess);
   }
 }

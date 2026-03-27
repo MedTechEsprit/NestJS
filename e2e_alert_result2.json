@@ -1,0 +1,24 @@
+﻿{
+    "doctorEmail":  "doctor.alert.1774206274@example.com",
+    "patientEmail":  "patient.alert.1774206274@example.com",
+    "doctorId":  "69c03d4207d3b20919e5558d",
+    "patientId":  "69c03d4207d3b20919e55592",
+    "requestId":  "69c03d4207d3b20919e5559b",
+    "glucoseId":  "69c03d4207d3b20919e555ab",
+    "notifCount":  1,
+    "unread":  1,
+    "latest":  {
+                   "_id":  "69c03d4207d3b20919e555af",
+                   "userId":  "69c03d4207d3b20919e5558d",
+                   "type":  "patient_alert",
+                   "title":  "Alerte glycémie critique élevée",
+                   "message":  "Alert Patient: Hyperglycémie sévère détectée: 285 mg/dL (22/03/2026 20:04:34)",
+                   "timestamp":  "2026-03-22T19:04:34.944Z",
+                   "isRead":  false,
+                   "relatedId":  "69c03d4207d3b20919e555ab",
+                   "severity":  "critical",
+                   "createdAt":  "2026-03-22T19:04:34.944Z",
+                   "updatedAt":  "2026-03-22T19:04:34.944Z",
+                   "__v":  0
+               }
+}

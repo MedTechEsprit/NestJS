@@ -12,33 +12,31 @@ import { PaginatedResult } from '../common/dto/pagination.dto';
 import { Meal } from '../nutrition/schemas/meal.schema';
 
 const OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://localhost:11434/api/generate';
-const OLLAMA_MODEL = 'llava:latest';
 const GLUCOSE_RECORDS_LIMIT = 20;
 const MEALS_LIMIT = 10;
 
-const SYSTEM_PROMPT_TEMPLATE = `You are MediBot, a specialized AI medical assistant for diabetic patients.
-YOUR STRICT RULES:
+const SYSTEM_PROMPT_TEMPLATE = `Tu es MediBot, un assistant médical IA chaleureux et compétent, spécialisé dans l'accompagnement des patients diabétiques.
 
-You ONLY answer questions about diabetes management and nutrition.
-If the user asks about ANYTHING else (weather, coding, news, general topics, politics, entertainment, etc.) respond ONLY with:
-"Je suis spécialisé uniquement dans le diabète et la nutrition. Je ne peux pas répondre à cette question."
-ALWAYS base your answers on the patient's actual data provided below.
-NEVER invent glucose values or meal data — use only what is provided.
-Always recommend consulting their doctor if the situation seems critical (glucose > 250 or < 60 mg/dL detected in their records).
-Respond in the SAME language as the user's question automatically.
-Be warm, clear, and avoid excessive medical jargon.
-You are NOT a replacement for a doctor — clarify this when relevant.
+Ton rôle :
+- Répondre à TOUTES les questions liées au diabète, à la glycémie, à l'insuline, à la nutrition, aux repas, au sport, au mode de vie, au stress, au sommeil, et à la santé en général des diabétiques.
+- Utiliser les données réelles du patient ci-dessous pour personnaliser tes réponses.
+- Répondre dans la MÊME langue que la question du patient (français, arabe, anglais, etc.).
+- Être encourageant, clair et pratique. Éviter le jargon médical excessif.
+- Préciser que tu ne remplaces pas un médecin quand c'est pertinent.
+- Recommander de consulter un médecin si la glycémie dépasse 250 ou descend sous 60 mg/dL.
 
---- PATIENT REAL DATA (use this to personalize your response) ---
-RECENT GLUCOSE RECORDS (most recent first):
+Règle unique de refus : si la question n'a AUCUN rapport avec la santé (ex: politique, sport professionnel, programmation, météo, divertissement), réponds : "Je suis spécialisé dans le diabète et la santé. Posez-moi une question sur votre glycémie, nutrition ou traitement !"
+
+--- DONNÉES DU PATIENT ---
+GLYCÉMIE RÉCENTE :
 {GLUCOSE_RECORDS}
-GLUCOSE STATISTICS:
+STATISTIQUES GLYCÉMIE :
 {GLUCOSE_STATS}
-RECENT MEALS CONSUMED:
+REPAS RÉCENTS :
 {RECENT_MEALS}
-NUTRITION STATISTICS:
+STATISTIQUES NUTRITION :
 {NUTRITION_STATS}
---- END OF PATIENT DATA ---`;
+--- FIN DES DONNÉES ---`;
 
 export interface GlucoseStats {
   average: number;
@@ -154,16 +152,43 @@ export class AiChatService {
       .replace('{RECENT_MEALS}', recentMealsText)
       .replace('{NUTRITION_STATS}', nutritionStatsText);
 
-    // Step 6 — Call Ollama
-    let aiResponse: string;
+    // Step 6 — Call Ollama with model fallback
+    let aiResponse: string = '';
+    const modelCandidates = this.getOllamaChatModelCandidates();
+    let lastError: unknown = null;
+
     try {
-      const { data } = await axios.post(
-        OLLAMA_URL,
-        { model: OLLAMA_MODEL, system: systemPrompt, prompt: message, stream: false },
-        { timeout: 240_000, headers: { 'Content-Type': 'application/json' } },
-      );
-      aiResponse = ((data as { response?: string }).response ?? '').trim();
-      if (!aiResponse) throw new Error('Empty response from Ollama');
+      for (const modelName of modelCandidates) {
+        try {
+          const { data } = await axios.post(
+            OLLAMA_URL,
+            { model: modelName, system: systemPrompt, prompt: message, stream: false },
+            { timeout: 240_000, headers: { 'Content-Type': 'application/json' } },
+          );
+          aiResponse = ((data as { response?: string }).response ?? '').trim();
+          if (!aiResponse) throw new Error('Empty response from Ollama');
+          this.logger.debug(`Chat model used: ${modelName}`);
+          break;
+        } catch (err) {
+          lastError = err;
+          if (axios.isAxiosError(err)) {
+            const status = err.response?.status;
+            const payload = JSON.stringify(err.response?.data ?? {});
+            const isModelNotFound =
+              status === 404 && /model\s+'.*'\s+not\s+found/i.test(payload);
+
+            if (isModelNotFound) {
+              this.logger.warn(`Chat model not found: ${modelName}. Trying next model.`);
+              continue;
+            }
+          }
+          throw err;
+        }
+      }
+
+      if (!aiResponse) {
+        throw new Error(`No usable Ollama chat model found. Tried: ${modelCandidates.join(', ')}`);
+      }
     } catch (error) {
       if (axios.isAxiosError(error)) {
         const axiosErr = error as AxiosError;
@@ -271,5 +296,21 @@ export class AiChatService {
       lastMealAt: new Date((last as any).eatenAt).toLocaleString(),
       lastMealCarbs: last.carbs ?? 0,
     };
+  }
+
+  private getOllamaChatModelCandidates(): string[] {
+    const ordered = [
+      'llava:latest',
+      'llava:13b',
+      'llava',
+      'llama3.1:8b',
+      'llama3.2:3b',
+      'llama3.1',
+      'llama3.2',
+      'mistral:7b',
+      'qwen2.5:7b',
+    ].filter((v): v is string => Boolean(v && v.trim()));
+
+    return [...new Set(ordered.map((v) => v.trim()))];
   }
 }

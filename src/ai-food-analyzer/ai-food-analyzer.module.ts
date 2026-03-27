@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AiFoodAnalyzerController } from './ai-food-analyzer.controller';
 import { AiFoodAnalyzerService } from './ai-food-analyzer.service';
@@ -13,6 +14,7 @@ import {
 
 @Module({
   imports: [
+    ConfigModule,
     MongooseModule.forFeature([
       { name: AiFoodAnalysis.name, schema: AiFoodAnalysisSchema },
     ]),

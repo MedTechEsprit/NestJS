@@ -14,7 +14,6 @@ import { PatternQueryDto } from './dto/pattern-query.dto';
 
 const OLLAMA_URL =
   process.env.OLLAMA_URL ?? 'http://localhost:11434/api/generate';
-const OLLAMA_MODEL = 'llava:latest';
 const RECORDS_LIMIT = 500;
 const MEALS_LIMIT = 200;
 const MIN_RECORDS_REQUIRED = 10;
@@ -433,19 +432,39 @@ export class AiPatternService {
       `  }\n` +
       `}`;
 
-    // ── Step 4: Call Ollama ──────────────────────────────────────────────
+    // ── Step 4: Call Ollama with model fallback ──────────────────────────
     let parsedResult: any;
     let isFallback = false;
+    const modelCandidates = this.getOllamaPatternModelCandidates();
 
     try {
-      const { data } = await axios.post(
-        OLLAMA_URL,
-        { model: OLLAMA_MODEL, system: PATTERN_SYSTEM_PROMPT, prompt: userPrompt, stream: false },
-        { timeout: OLLAMA_TIMEOUT, headers: { 'Content-Type': 'application/json' } },
-      );
-      const text = ((data as any).response ?? '').trim();
-      if (!text) throw new Error('Empty response from Ollama');
-      parsedResult = this.parseOllamaJson(text, ` patient=${patientId}`);
+      for (const modelName of modelCandidates) {
+        try {
+          const { data } = await axios.post(
+            OLLAMA_URL,
+            { model: modelName, system: PATTERN_SYSTEM_PROMPT, prompt: userPrompt, stream: false },
+            { timeout: OLLAMA_TIMEOUT, headers: { 'Content-Type': 'application/json' } },
+          );
+          const text = ((data as any).response ?? '').trim();
+          if (!text) throw new Error('Empty response from Ollama');
+          this.logger.debug(`Pattern model used: ${modelName}`);
+          parsedResult = this.parseOllamaJson(text, ` patient=${patientId}`);
+          break;
+        } catch (err) {
+          if (axios.isAxiosError(err)) {
+            const status = err.response?.status;
+            const payload = JSON.stringify(err.response?.data ?? {});
+            const isModelNotFound =
+              status === 404 && /model\s+'.*'\s+not\s+found/i.test(payload);
+
+            if (isModelNotFound) {
+              this.logger.warn(`Pattern model not found: ${modelName}. Trying next model.`);
+              continue;
+            }
+          }
+          throw err;
+        }
+      }
     } catch (err) {
       this.logger.warn(
         `Ollama unavailable, using fallback pattern analysis: ${String(err)}`,
@@ -642,6 +661,21 @@ export class AiPatternService {
         },
       };
     }
+  }
+
+  private getOllamaPatternModelCandidates(): string[] {
+    const ordered = [
+      'llava:latest',
+      'llava:13b',
+      'llava',
+      'llama3.1:8b',
+      'llama3.2:3b',
+      'llama3.1',
+      'llama3.2',
+      'mistral:7b',
+      'qwen2.5:7b',
+    ].filter((v): v is string => Boolean(v && v.trim()));
+    return [...new Set(ordered.map((v) => v.trim()))];
   }
 
   // ── getLatestAnalysis ────────────────────────────────────────────────────
