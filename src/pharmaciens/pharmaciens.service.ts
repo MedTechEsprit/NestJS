@@ -4,7 +4,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { Pharmacien, PharmacienDocument } from './schemas/pharmacien.schema';
 import { CreatePharmacienDto } from './dto/create-pharmacien.dto';
@@ -12,12 +12,59 @@ import { UpdatePharmacienDto } from './dto/update-pharmacien.dto';
 import { PaginationDto, PaginatedResult } from '../common/dto/pagination.dto';
 import { Role } from '../common/enums/role.enum';
 import { StatutCompte } from '../common/enums/statut-compte.enum';
+import { Order, OrderDocument } from '../orders/schemas/order.schema';
 
 @Injectable()
 export class PharmaciensService {
   constructor(
     @InjectModel(Pharmacien.name) private pharmacienModel: Model<PharmacienDocument>,
+    @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
   ) {}
+
+  private async getOrderStats(pharmacyId: string): Promise<{
+    totalOrders: number;
+    acceptedOrders: number;
+    declinedOrders: number;
+    pendingOrders: number;
+    totalRevenue: number;
+    totalClients: number;
+  }> {
+    const pid = new Types.ObjectId(pharmacyId);
+
+    const [
+      totalOrders,
+      acceptedOrders,
+      declinedOrders,
+      pendingOrders,
+      revenueAgg,
+      clientIds,
+    ] = await Promise.all([
+      this.orderModel.countDocuments({ pharmacistId: pid }),
+      this.orderModel.countDocuments({
+        pharmacistId: pid,
+        status: { $in: ['confirmed', 'ready', 'picked_up'] },
+      }),
+      this.orderModel.countDocuments({ pharmacistId: pid, status: 'cancelled' }),
+      this.orderModel.countDocuments({ pharmacistId: pid, status: 'pending' }),
+      this.orderModel.aggregate([
+        { $match: { pharmacistId: pid, status: 'picked_up' } },
+        { $group: { _id: null, total: { $sum: '$totalPrice' } } },
+      ]),
+      this.orderModel.distinct('patientId', {
+        pharmacistId: pid,
+        status: 'picked_up',
+      }),
+    ]);
+
+    return {
+      totalOrders,
+      acceptedOrders,
+      declinedOrders,
+      pendingOrders,
+      totalRevenue: revenueAgg[0]?.total || 0,
+      totalClients: clientIds.length,
+    };
+  }
 
   async create(createPharmacienDto: CreatePharmacienDto): Promise<Partial<Pharmacien>> {
     const { email, motDePasse, numeroOrdre, ...rest } = createPharmacienDto;
@@ -298,27 +345,28 @@ export class PharmaciensService {
     }
 
     const pharmacienObj = pharmacien.toObject() as any;
+    const orderStats = await this.getOrderStats(id);
 
     const acceptanceRate =
-      pharmacienObj.totalRequestsReceived > 0
-        ? Math.round((pharmacienObj.totalRequestsAccepted / pharmacienObj.totalRequestsReceived) * 100)
+      orderStats.totalOrders > 0
+        ? Math.round((orderStats.acceptedOrders / orderStats.totalOrders) * 100)
         : 0;
 
     const responseRate =
-      pharmacienObj.totalRequestsReceived > 0
+      orderStats.totalOrders > 0
         ? Math.round(
-            ((pharmacienObj.totalRequestsAccepted + pharmacienObj.totalRequestsDeclined) /
-              pharmacienObj.totalRequestsReceived) *
+            ((orderStats.acceptedOrders + orderStats.declinedOrders) /
+              orderStats.totalOrders) *
               100,
           )
         : 0;
 
     return {
-      totalRequestsReceived: pharmacienObj.totalRequestsReceived || 0,
-      totalRequestsAccepted: pharmacienObj.totalRequestsAccepted || 0,
-      totalRequestsDeclined: pharmacienObj.totalRequestsDeclined || 0,
-      totalClients: pharmacienObj.totalClients || 0,
-      totalRevenue: pharmacienObj.totalRevenue || 0,
+      totalRequestsReceived: orderStats.totalOrders,
+      totalRequestsAccepted: orderStats.acceptedOrders,
+      totalRequestsDeclined: orderStats.declinedOrders,
+      totalClients: orderStats.totalClients || pharmacienObj.totalClients || 0,
+      totalRevenue: orderStats.totalRevenue || pharmacienObj.totalRevenue || 0,
       averageResponseTime: pharmacienObj.averageResponseTime || 0,
       averageRating: pharmacienObj.averageRating || 0,
       totalReviews: pharmacienObj.totalReviews || 0,
@@ -357,6 +405,7 @@ export class PharmaciensService {
     }
 
     const pharmacienObj = pharmacien.toObject() as any;
+    const orderStats = await this.getOrderStats(id);
 
     // Calculer les statistiques
     const stats = await this.getStats(id);
@@ -441,7 +490,7 @@ export class PharmaciensService {
       pharmacy: pharmacienObj,
       stats,
       monthlyStats,
-      pendingRequestsCount: 0, // À calculer depuis MedicationRequest
+      pendingRequestsCount: orderStats.pendingOrders,
       recentActivity: [], // À charger depuis Activities
       recentReviews: [], // À charger depuis Reviews
       badgeProgression,

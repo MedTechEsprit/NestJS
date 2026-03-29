@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+import { Document, Schema as MongooseSchema, Types } from 'mongoose';
 import { ApiProperty } from '@nestjs/swagger';
 
 export type AiFoodAnalysisDocument = AiFoodAnalysis & Document;
@@ -143,6 +143,14 @@ export class AiFoodAnalysis {
   @ApiProperty({ description: 'Conseils détaillés personnalisés (LLaVA 2ème appel)', type: DetailedAdvice })
   @Prop({ type: DetailedAdviceSchema, required: true })
   detailedAdvice: DetailedAdvice;
+
+  @ApiProperty({ description: 'Raw Ollama detection payload (visual only)', required: false })
+  @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
+  ollamaDetection?: Record<string, unknown>;
+
+  @ApiProperty({ description: 'Full Gemini report payload', required: false })
+  @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
+  fullReport?: Record<string, unknown>;
 
   @ApiProperty({ description: 'true si le 2ème appel IA a échoué et le fallback a été utilisé' })
   @Prop({ default: false })

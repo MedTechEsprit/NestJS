@@ -12,7 +12,6 @@ import { PaginatedResult } from '../common/dto/pagination.dto';
 import { Meal } from '../nutrition/schemas/meal.schema';
 
 const OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://localhost:11434/api/generate';
-const OLLAMA_MODEL = 'llava:13b';
 const GLUCOSE_RECORDS_LIMIT = 20;
 const MEALS_LIMIT = 10;
 
@@ -153,16 +152,43 @@ export class AiChatService {
       .replace('{RECENT_MEALS}', recentMealsText)
       .replace('{NUTRITION_STATS}', nutritionStatsText);
 
-    // Step 6 — Call Ollama
-    let aiResponse: string;
+    // Step 6 — Call Ollama with model fallback
+    let aiResponse: string = '';
+    const modelCandidates = this.getOllamaChatModelCandidates();
+    let lastError: unknown = null;
+
     try {
-      const { data } = await axios.post(
-        OLLAMA_URL,
-        { model: OLLAMA_MODEL, system: systemPrompt, prompt: message, stream: false },
-        { timeout: 240_000, headers: { 'Content-Type': 'application/json' } },
-      );
-      aiResponse = ((data as { response?: string }).response ?? '').trim();
-      if (!aiResponse) throw new Error('Empty response from Ollama');
+      for (const modelName of modelCandidates) {
+        try {
+          const { data } = await axios.post(
+            OLLAMA_URL,
+            { model: modelName, system: systemPrompt, prompt: message, stream: false },
+            { timeout: 240_000, headers: { 'Content-Type': 'application/json' } },
+          );
+          aiResponse = ((data as { response?: string }).response ?? '').trim();
+          if (!aiResponse) throw new Error('Empty response from Ollama');
+          this.logger.debug(`Chat model used: ${modelName}`);
+          break;
+        } catch (err) {
+          lastError = err;
+          if (axios.isAxiosError(err)) {
+            const status = err.response?.status;
+            const payload = JSON.stringify(err.response?.data ?? {});
+            const isModelNotFound =
+              status === 404 && /model\s+'.*'\s+not\s+found/i.test(payload);
+
+            if (isModelNotFound) {
+              this.logger.warn(`Chat model not found: ${modelName}. Trying next model.`);
+              continue;
+            }
+          }
+          throw err;
+        }
+      }
+
+      if (!aiResponse) {
+        throw new Error(`No usable Ollama chat model found. Tried: ${modelCandidates.join(', ')}`);
+      }
     } catch (error) {
       if (axios.isAxiosError(error)) {
         const axiosErr = error as AxiosError;
@@ -270,5 +296,21 @@ export class AiChatService {
       lastMealAt: new Date((last as any).eatenAt).toLocaleString(),
       lastMealCarbs: last.carbs ?? 0,
     };
+  }
+
+  private getOllamaChatModelCandidates(): string[] {
+    const ordered = [
+      'llava:latest',
+      'llava:13b',
+      'llava',
+      'llama3.1:8b',
+      'llama3.2:3b',
+      'llama3.1',
+      'llama3.2',
+      'mistral:7b',
+      'qwen2.5:7b',
+    ].filter((v): v is string => Boolean(v && v.trim()));
+
+    return [...new Set(ordered.map((v) => v.trim()))];
   }
 }

@@ -20,6 +20,7 @@ import { CreateMedicationRequestDto, RespondToRequestDto, CreateSimpleRequestDto
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Role } from '../common/enums/role.enum';
 
 @ApiTags('Medication Requests')
@@ -33,6 +34,30 @@ export class MedicationRequestsController {
   @ApiResponse({ status: 400, description: 'Données invalides' })
   create(@Body() createDto: CreateMedicationRequestDto) {
     return this.requestsService.create(createDto);
+  }
+
+  @Post('patient')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.PATIENT)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Créer une demande de médicament (patient)' })
+  @ApiResponse({ status: 201, description: 'Demande créée avec succès' })
+  @ApiResponse({ status: 400, description: 'Données invalides' })
+  createForPatient(
+    @CurrentUser('_id') patientId: string,
+    @Body() createDto: CreateMedicationRequestDto,
+  ) {
+    return this.requestsService.createForPatient(String(patientId), createDto);
+  }
+
+  @Get('patient/my')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.PATIENT)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Récupérer mes demandes (patient)' })
+  @ApiResponse({ status: 200, description: 'Liste des demandes' })
+  getMyRequests(@CurrentUser('_id') patientId: string) {
+    return this.requestsService.findByPatient(String(patientId));
   }
 
   @Post('test/simple')

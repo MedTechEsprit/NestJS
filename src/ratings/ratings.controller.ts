@@ -18,6 +18,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/enums/role.enum';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @ApiTags('Ratings')
 @Controller('ratings')
@@ -25,15 +26,20 @@ export class RatingsController {
   constructor(private readonly ratingsService: RatingsService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.PATIENT)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Créer une nouvelle évaluation (patient)' })
   @ApiResponse({ status: 201, description: 'Évaluation créée et points appliqués' })
   @ApiResponse({ status: 400, description: 'Données invalides ou évaluation déjà existante' })
   @ApiResponse({ status: 404, description: 'Demande non trouvée' })
   @ApiResponse({ status: 401, description: 'Non autorisé' })
-  async create(@Body() createRatingDto: CreateRatingDto): Promise<any> {
-    return this.ratingsService.create(createRatingDto);
+  async create(
+    @CurrentUser('_id') userId: string,
+    @Body() createRatingDto: CreateRatingDto,
+  ): Promise<any> {
+    const patientId = userId?.toString() ?? createRatingDto.patientId;
+    return this.ratingsService.create({ ...createRatingDto, patientId });
   }
 
   @Get('pharmacy/:pharmacyId')

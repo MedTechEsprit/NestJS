@@ -12,11 +12,11 @@ export class PharmacyActivity {
 
   @ApiProperty({ 
     description: 'Type d\'activité', 
-    enum: ['request_received', 'request_accepted', 'request_unavailable', 'request_declined', 'request_ignored', 'client_pickup', 'review_received', 'points_earned', 'badge_unlocked', 'boost_activated'] 
+    enum: ['request_received', 'request_accepted', 'request_unavailable', 'request_declined', 'request_ignored', 'client_pickup', 'review_received', 'rating_received', 'points_earned', 'badge_unlocked', 'boost_activated'] 
   })
   @Prop({ 
     type: String, 
-    enum: ['request_received', 'request_accepted', 'request_unavailable', 'request_declined', 'request_ignored', 'client_pickup', 'review_received', 'points_earned', 'badge_unlocked', 'boost_activated'],
+    enum: ['request_received', 'request_accepted', 'request_unavailable', 'request_declined', 'request_ignored', 'client_pickup', 'review_received', 'rating_received', 'points_earned', 'badge_unlocked', 'boost_activated'],
     required: true 
   })
   activityType: string;

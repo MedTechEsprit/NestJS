@@ -24,7 +24,6 @@ import {
 
 const OLLAMA_URL =
   process.env.OLLAMA_URL ?? 'http://localhost:11434/api/generate';
-const OLLAMA_MODEL = 'llava:13b';
 const GLUCOSE_RECORDS_PER_PATIENT = 30;
 const MEALS_PER_PATIENT = 10;
 const MAX_PATIENTS_IN_CONTEXT = 20;
@@ -525,45 +524,46 @@ export class AiDoctorService {
     prompt: string,
     timeout: number,
   ): Promise<string> {
-    try {
-      const { data } = await axios.post(
-        OLLAMA_URL,
-        { model: OLLAMA_MODEL, system, prompt, stream: false },
-        { timeout, headers: { 'Content-Type': 'application/json' } },
-      );
-      const text = ((data as { response?: string }).response ?? '').trim();
-      if (!text) throw new Error('Empty response from Ollama');
-      return text;
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const axiosErr = error as AxiosError;
-        if (!axiosErr.response || axiosErr.code === 'ECONNREFUSED') {
-          this.logger.error(`Ollama unreachable: ${axiosErr.code} — ${axiosErr.message}`);
-          throw new HttpException(
-            "Le service IA (Ollama) n'est pas disponible. Vérifiez qu'Ollama tourne sur http://localhost:11434.",
-            HttpStatus.SERVICE_UNAVAILABLE,
-          );
-        }
-        if (axiosErr.code === 'ECONNABORTED') {
-          this.logger.error(`Ollama timeout: ${axiosErr.message}`);
-          throw new HttpException(
-            'Le service IA est temporairement indisponible. Réessayez dans quelques instants.',
-            HttpStatus.SERVICE_UNAVAILABLE,
-          );
-        }
-        this.logger.error(
-          `Ollama HTTP ${axiosErr.response.status}: ${JSON.stringify(axiosErr.response.data)}`,
+    const modelCandidates = this.getOllamaDoctorModelCandidates();
+    for (const modelName of modelCandidates) {
+      try {
+        const { data } = await axios.post(
+          OLLAMA_URL,
+          { model: modelName, system, prompt, stream: false },
+          { timeout, headers: { 'Content-Type': 'application/json' } },
         );
-        throw new HttpException(
-          'Le service IA a retourné une erreur.',
-          HttpStatus.SERVICE_UNAVAILABLE,
-        );
+        const text = ((data as { response?: string }).response ?? '').trim();
+        if (!text) throw new Error('Empty response from Ollama');
+        this.logger.debug(`Doctor model used: ${modelName}`);
+        return text;
+      } catch (err) {
+        if (axios.isAxiosError(err)) {
+          const status = err.response?.status;
+          const payload = JSON.stringify(err.response?.data ?? {});
+          const isModelNotFound =
+            status === 404 && /model\s+'.*'\s+not\s+found/i.test(payload);
+
+          if (isModelNotFound) {
+            this.logger.warn(`Doctor model not found: ${modelName}. Trying next model.`);
+            continue;
+          }
+        }
+        throw err;
       }
-      this.logger.error(`Unexpected Ollama error: ${String(error)}`);
-      throw new HttpException(
-        'Une erreur inattendue est survenue.',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
     }
+    throw new Error(`No usable Ollama doctor model found. Tried: ${modelCandidates.join(', ')}`);
+  }
+
+  private getOllamaDoctorModelCandidates(): string[] {
+    const ordered = [
+      'llava:latest',
+      'llava:13b',
+      'llava',
+      'llama3.1:8b',
+      'llama3.2:3b',
+      'llama3.1',
+      'llama3.2',
+    ].filter((v): v is string => Boolean(v && v.trim()));
+    return [...new Set(ordered.map((v) => v.trim()))];
   }
 }

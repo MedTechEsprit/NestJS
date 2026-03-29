@@ -3,8 +3,9 @@ import { IsMongoId, IsNumber, IsString, IsBoolean, IsOptional, Min, Max } from '
 
 export class CreateRatingDto {
   @ApiProperty({ description: 'ID du patient', example: '507f1f77bcf86cd799439011' })
+  @IsOptional()
   @IsMongoId()
-  patientId: string;
+  patientId?: string;
 
   @ApiProperty({ description: 'ID de la pharmacie évaluée', example: '507f1f77bcf86cd799439012' })
   @IsMongoId()

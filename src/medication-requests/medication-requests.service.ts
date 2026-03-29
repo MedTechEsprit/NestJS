@@ -21,6 +21,20 @@ export class MedicationRequestsService {
   ) {}
 
   async create(createDto: CreateMedicationRequestDto): Promise<MedicationRequest> {
+    return this.createInternal(createDto);
+  }
+
+  async createForPatient(
+    patientId: string,
+    createDto: CreateMedicationRequestDto,
+  ): Promise<MedicationRequest> {
+    return this.createInternal(createDto, patientId);
+  }
+
+  private async createInternal(
+    createDto: CreateMedicationRequestDto,
+    patientId?: string,
+  ): Promise<MedicationRequest> {
     const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2 heures
 
     // Créer les réponses de pharmacie pour chaque pharmacie ciblée
@@ -30,6 +44,7 @@ export class MedicationRequestsService {
     }));
 
     const newRequest = new this.requestModel({
+      patientId: patientId ? new Types.ObjectId(patientId) : undefined,
       medicationName: createDto.medicationName,
       dosage: createDto.dosage,
       quantity: createDto.quantity,
@@ -81,6 +96,14 @@ export class MedicationRequestsService {
     return this.requestModel
       .find(query)
       .populate('selectedPharmacyId', 'nomPharmacie')
+      .sort({ createdAt: -1 })
+      .exec();
+  }
+
+  async findByPatient(patientId: string): Promise<MedicationRequest[]> {
+    return this.requestModel
+      .find({ patientId: new Types.ObjectId(patientId) })
+      .populate('pharmacyResponses.pharmacyId', 'nomPharmacie telephonePharmacie adressePharmacie')
       .sort({ createdAt: -1 })
       .exec();
   }

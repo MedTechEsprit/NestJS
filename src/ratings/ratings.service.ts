@@ -19,6 +19,10 @@ export class RatingsService {
   ) {}
 
   async create(createRatingDto: CreateRatingDto): Promise<Rating> {
+    if (!createRatingDto.patientId) {
+      throw new BadRequestException('Patient manquant');
+    }
+
     // Vérifier que la demande existe
     const medicationRequest = await this.medicationRequestModel
       .findById(createRatingDto.medicationRequestId)
@@ -26,6 +30,22 @@ export class RatingsService {
 
     if (!medicationRequest) {
       throw new NotFoundException('Demande de medication non trouvée');
+    }
+
+    if (!medicationRequest.patientId) {
+      throw new BadRequestException('Demande non rattachée à un patient');
+    }
+
+    if (medicationRequest.patientId.toString() !== createRatingDto.patientId) {
+      throw new BadRequestException('Cette demande ne vous appartient pas');
+    }
+
+    const isLinkedPharmacy = (medicationRequest.pharmacyResponses || []).some(
+      (response) => response.pharmacyId?.toString() === createRatingDto.pharmacyId,
+    );
+
+    if (!isLinkedPharmacy) {
+      throw new BadRequestException('Pharmacie non liée à cette demande');
     }
 
     // Vérifier qu'il n'existe pas déjà une note pour cette request
@@ -180,6 +200,7 @@ export class RatingsService {
       {
         $set: {
           averageRating: parseFloat(averageRating.toFixed(1)),
+          noteMoyenne: parseFloat(averageRating.toFixed(1)),
           totalReviews: ratings.length,
         },
       },
