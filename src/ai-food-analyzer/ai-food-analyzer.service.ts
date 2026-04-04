@@ -453,7 +453,7 @@ export class AiFoodAnalyzerService {
             images: [base64Image],
             stream: false,
           },
-          { timeout: 360_000, headers: { 'Content-Type': 'application/json' } },
+          { timeout: 120_000, headers: { 'Content-Type': 'application/json' } },
         );
         ollamaResponseText = (data as { response: string }).response ?? '';
         this.logger.debug(`Ollama vision model used: ${modelName}`);

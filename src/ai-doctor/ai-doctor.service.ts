@@ -6,12 +6,15 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import axios, { AxiosError } from 'axios';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GlucoseService } from '../glucose/glucose.service';
 import { NutritionService } from '../nutrition/nutrition.service';
 import { MedecinsService } from '../medecins/medecins.service';
+import { PatientsService } from '../patients/patients.service';
 import { Medecin, MedecinDocument } from '../medecins/schemas/medecin.schema';
 import {
   AiDoctorChat,
@@ -27,6 +30,19 @@ const OLLAMA_URL =
 const GLUCOSE_RECORDS_PER_PATIENT = 30;
 const MEALS_PER_PATIENT = 10;
 const MAX_PATIENTS_IN_CONTEXT = 20;
+
+const REPORT_GLUCOSE_RECORDS = 90;
+const REPORT_MEALS = 20;
+
+const GEMINI_REPORT_SYSTEM_INSTRUCTION =
+  `You are a senior diabetologist writing a professional clinical report for another physician.\n` +
+  `Rules:\n` +
+  `- Use only the provided patient data.\n` +
+  `- If data is missing, explicitly write \"Not available\" instead of inventing.\n` +
+  `- Keep medical tone, precise and actionable.\n` +
+  `- Mention safety alerts and priorities first.\n` +
+  `- Never prescribe exact medication doses.\n` +
+  `- Return valid JSON only, no markdown, no extra text.\n`;
 
 const SYSTEM_PROMPT_TEMPLATE =
   `You are MediAssist, an AI clinical decision support system for diabetologist doctors.\n` +
@@ -65,9 +81,11 @@ export class AiDoctorService {
     private readonly aiPredictionModel: Model<AiPredictionDocument>,
     @InjectModel(Medecin.name)
     private readonly medecinModel: Model<MedecinDocument>,
+    private readonly configService: ConfigService,
     private readonly glucoseService: GlucoseService,
     private readonly nutritionService: NutritionService,
     private readonly medecinsService: MedecinsService,
+    private readonly patientsService: PatientsService,
   ) {}
 
   // ── Private: get doctor raw data directly from discriminator model ─────────
@@ -413,6 +431,94 @@ export class AiDoctorService {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
+  // ── 5. Gemini medical report (single patient) ──────────────────────────────
+
+  async generatePatientMedicalReport(
+    doctorId: string,
+    patientId: string,
+  ): Promise<{
+    patientId: string;
+    generatedAt: string;
+    sourceMetrics: {
+      glucoseRecordsAnalyzed: number;
+      mealsAnalyzed: number;
+      hasPrediction: boolean;
+    };
+    report: {
+      title: string;
+      executiveSummary: string;
+      patientOverview: string[];
+      clinicalFindings: string[];
+      riskAssessment: string[];
+      treatmentPlan: string[];
+      lifestylePlan: string[];
+      followUpPlan: string[];
+      alerts: string[];
+      physicianNotes: string;
+    };
+  }> {
+    const doctor = await this.getDoctorRaw(doctorId);
+    if (!doctor.listePatients.includes(patientId)) {
+      throw new ForbiddenException('Ce patient ne fait pas partie de vos patients.');
+    }
+
+    const [patientRaw, glucoseResult, mealsResult, lastPrediction] = await Promise.all([
+      this.patientsService.findOne(patientId),
+      this.glucoseService
+        .findMyRecords(patientId, { page: 1, limit: REPORT_GLUCOSE_RECORDS })
+        .catch(() => ({ data: [] as any[] })),
+      this.nutritionService
+        .findAllMeals(patientId, undefined, undefined, { page: 1, limit: REPORT_MEALS })
+        .catch(() => ({ data: [] as any[] })),
+      this.aiPredictionModel
+        .findOne({ patientId: new Types.ObjectId(patientId) })
+        .sort({ createdAt: -1 })
+        .lean()
+        .exec()
+        .catch(() => null),
+    ]);
+
+    const patient = (patientRaw ?? {}) as Record<string, unknown>;
+    const records: any[] = (glucoseResult as any)?.data ?? [];
+    const meals: any[] = (mealsResult as any)?.data ?? [];
+
+    const values = records.map((r) => toNum(r?.value)).filter((v) => v > 0);
+    const avgGlucose =
+      values.length > 0
+        ? Math.round(values.reduce((a, b) => a + b, 0) / values.length)
+        : null;
+    const estimatedHbA1c =
+      avgGlucose !== null ? Number(((avgGlucose + 46.7) / 28.7).toFixed(1)) : null;
+
+    const patientDisplayName =
+      `${String(patient.prenom ?? '').trim()} ${String(patient.nom ?? '').trim()}`.trim() ||
+      doctor.patients.find((p) => p.id === patientId)?.name ||
+      patientId;
+
+    const report = await this.generateGeminiMedicalReport({
+      doctor,
+      patient,
+      patientId,
+      patientDisplayName,
+      glucoseRecords: records,
+      meals,
+      lastPrediction,
+      avgGlucose,
+      estimatedHbA1c,
+    });
+
+    return {
+      patientId,
+      generatedAt: new Date().toISOString(),
+      sourceMetrics: {
+        glucoseRecordsAnalyzed: records.length,
+        mealsAnalyzed: meals.length,
+        hasPrediction: Boolean(lastPrediction),
+      },
+      report,
+    };
+  }
+
   // ── Private: build compact patient summary ──────────────────────────────────
 
   private async buildPatientSummary(patientId: string, patientName?: string): Promise<string> {
@@ -497,6 +603,230 @@ export class AiDoctorService {
         ? `URGENT FLAGS: ${urgentFlags.join(', ')}`
         : 'No urgent flags')
     );
+  }
+
+  private async generateGeminiMedicalReport(args: {
+    doctor: {
+      nom: string;
+      prenom: string;
+      specialite: string;
+      listePatients: string[];
+      patients: Array<{ id: string; name: string }>;
+    };
+    patient: Record<string, unknown>;
+    patientId: string;
+    patientDisplayName: string;
+    glucoseRecords: any[];
+    meals: any[];
+    lastPrediction: unknown;
+    avgGlucose: number | null;
+    estimatedHbA1c: number | null;
+  }): Promise<{
+    title: string;
+    executiveSummary: string;
+    patientOverview: string[];
+    clinicalFindings: string[];
+    riskAssessment: string[];
+    treatmentPlan: string[];
+    lifestylePlan: string[];
+    followUpPlan: string[];
+    alerts: string[];
+    physicianNotes: string;
+  }> {
+    const apiKey = this.configService.get<string>('GEMINI_API_KEY');
+    if (!apiKey) {
+      throw new HttpException(
+        'Configuration Gemini manquante (GEMINI_API_KEY).',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+
+    const profilMedical = (args.patient.profilMedical ?? {}) as Record<string, unknown>;
+    const glucoseCompact = args.glucoseRecords.slice(0, 30).map((r) => ({
+      value: toNum(r?.value),
+      measuredAt: r?.measuredAt,
+      period: r?.period ?? 'unknown',
+    }));
+    const mealsCompact = args.meals.slice(0, 15).map((m) => ({
+      name: m?.name ?? 'Unknown',
+      carbs: toNum(m?.carbs),
+      calories: toNum(m?.calories),
+      protein: toNum(m?.protein),
+      fat: toNum(m?.fat),
+      eatenAt: m?.eatenAt,
+    }));
+
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      doctor: {
+        id: 'doctor-context',
+        name: `Dr. ${args.doctor.prenom} ${args.doctor.nom}`.trim(),
+        specialty: args.doctor.specialite,
+      },
+      patient: {
+        id: args.patientId,
+        fullName: args.patientDisplayName,
+        sexe: args.patient.sexe ?? null,
+        dateNaissance: args.patient.dateNaissance ?? null,
+        typeDiabete: args.patient.typeDiabete ?? null,
+        groupeSanguin: args.patient.groupeSanguin ?? null,
+        profilMedical,
+      },
+      analytics: {
+        averageGlucoseMgDl: args.avgGlucose,
+        estimatedHbA1c: args.estimatedHbA1c,
+        recordsCount: args.glucoseRecords.length,
+        mealsCount: args.meals.length,
+      },
+      recentGlucose: glucoseCompact,
+      recentMeals: mealsCompact,
+      latestPrediction: args.lastPrediction ?? null,
+    };
+
+    const prompt =
+      `Generate a detailed medical report in French for this patient.\n` +
+      `Output MUST be a strict JSON object with exactly these keys:\n` +
+      `{\n` +
+      `  \"title\": string,\n` +
+      `  \"executiveSummary\": string,\n` +
+      `  \"patientOverview\": string[],\n` +
+      `  \"clinicalFindings\": string[],\n` +
+      `  \"riskAssessment\": string[],\n` +
+      `  \"treatmentPlan\": string[],\n` +
+      `  \"lifestylePlan\": string[],\n` +
+      `  \"followUpPlan\": string[],\n` +
+      `  \"alerts\": string[],\n` +
+      `  \"physicianNotes\": string\n` +
+      `}\n` +
+      `If any section has no data, return one explicit sentence in French in that section.\n` +
+      `Patient JSON:\n${JSON.stringify(payload, null, 2)}`;
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const modelCandidates = this.getGeminiModelCandidates();
+    let lastError: unknown = null;
+
+    for (const modelName of modelCandidates) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            responseMimeType: 'application/json',
+          },
+          systemInstruction: GEMINI_REPORT_SYSTEM_INSTRUCTION,
+        });
+
+        const result = await model.generateContent(prompt);
+        const rawText = result.response.text();
+        const clean = rawText.replace(/```json|```/g, '').trim();
+        const parsed = JSON.parse(clean) as Record<string, unknown>;
+        return this.normalizeMedicalReport(parsed, args.patientDisplayName);
+      } catch (error) {
+        lastError = error;
+        const message = error instanceof Error ? error.message : String(error);
+        const isModelNotFound =
+          message.includes('[404 Not Found]') ||
+          /model[s]?\/.+\s+is\s+not\s+found/i.test(message) ||
+          message.includes('is not found for API version');
+
+        if (isModelNotFound) {
+          this.logger.warn(`Gemini model not available: ${modelName}. Trying next model.`);
+          continue;
+        }
+
+        this.logger.warn(`Gemini report generation failed on model ${modelName}: ${message}`);
+      }
+    }
+
+    const reason = lastError instanceof Error ? lastError.message : String(lastError);
+    throw new HttpException(
+      `Erreur Gemini lors de la génération du rapport médical: ${reason}`,
+      HttpStatus.SERVICE_UNAVAILABLE,
+    );
+  }
+
+  private normalizeMedicalReport(
+    source: Record<string, unknown>,
+    patientDisplayName: string,
+  ): {
+    title: string;
+    executiveSummary: string;
+    patientOverview: string[];
+    clinicalFindings: string[];
+    riskAssessment: string[];
+    treatmentPlan: string[];
+    lifestylePlan: string[];
+    followUpPlan: string[];
+    alerts: string[];
+    physicianNotes: string;
+  } {
+    const toStr = (v: unknown, fallback: string): string => {
+      if (typeof v === 'string' && v.trim().length > 0) return v.trim();
+      return fallback;
+    };
+
+    const toStrArray = (v: unknown, fallback: string): string[] => {
+      if (Array.isArray(v)) {
+        const out = v
+          .map((x) => String(x ?? '').trim())
+          .filter((x) => x.length > 0);
+        if (out.length > 0) return out;
+      }
+      return [fallback];
+    };
+
+    return {
+      title: toStr(source.title, `Rapport Medical Detaille - ${patientDisplayName}`),
+      executiveSummary: toStr(
+        source.executiveSummary,
+        'Resume clinique indisponible temporairement.',
+      ),
+      patientOverview: toStrArray(
+        source.patientOverview,
+        'Donnees generales du patient non disponibles.',
+      ),
+      clinicalFindings: toStrArray(
+        source.clinicalFindings,
+        'Constat clinique detaille non disponible.',
+      ),
+      riskAssessment: toStrArray(
+        source.riskAssessment,
+        'Evaluation du risque non disponible.',
+      ),
+      treatmentPlan: toStrArray(
+        source.treatmentPlan,
+        'Plan therapeutique a confirmer en consultation.',
+      ),
+      lifestylePlan: toStrArray(
+        source.lifestylePlan,
+        'Mesures de mode de vie non detaillees.',
+      ),
+      followUpPlan: toStrArray(
+        source.followUpPlan,
+        'Plan de suivi a definir.',
+      ),
+      alerts: toStrArray(
+        source.alerts,
+        'Aucune alerte critique explicite sur les donnees disponibles.',
+      ),
+      physicianNotes: toStr(
+        source.physicianNotes,
+        'La decision finale appartient au medecin traitant.',
+      ),
+    };
+  }
+
+  private getGeminiModelCandidates(): string[] {
+    const configured = this.configService.get<string>('GEMINI_MODEL')?.trim();
+    const ordered = [
+      configured,
+      'gemini-2.0-flash',
+      'gemini-2.0-flash-lite',
+      'gemini-1.5-pro',
+      'gemini-1.5-flash',
+      'gemini-1.5-flash-latest',
+    ].filter((v): v is string => Boolean(v));
+
+    return [...new Set(ordered)];
   }
 
   /** Returns raw numeric stats for a patient (used by urgentCheck) */

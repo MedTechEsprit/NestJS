@@ -4,11 +4,9 @@ import {
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import axios from 'axios';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AiPattern, AiPatternDocument } from './schemas/ai-pattern.schema';
 import { GlucoseService } from '../glucose/glucose.service';
 import { NutritionService } from '../nutrition/nutrition.service';
@@ -19,7 +17,7 @@ const OLLAMA_URL =
 const RECORDS_LIMIT = 500;
 const MEALS_LIMIT = 200;
 const MIN_RECORDS_REQUIRED = 10;
-const OLLAMA_TIMEOUT = Number(process.env.OLLAMA_TIMEOUT_MS ?? 420_000);
+const OLLAMA_TIMEOUT = 240_000;
 
 const PATTERN_SYSTEM_PROMPT =
   `You are an expert endocrinologist and data analyst ` +
@@ -44,7 +42,6 @@ export class AiPatternService {
     private readonly aiPatternModel: Model<AiPatternDocument>,
     private readonly glucoseService: GlucoseService,
     private readonly nutritionService: NutritionService,
-    private readonly configService: ConfigService,
   ) {}
 
   // ── Utility helpers ──────────────────────────────────────────────────────
@@ -140,92 +137,6 @@ export class AiPatternService {
       this.logger.warn(`[parseOllamaJson] both parse attempts failed: ${(e2 as Error).message}`);
       throw e2;
     }
-  }
-
-  private async callOllamaPattern(
-    userPrompt: string,
-    patientId: string,
-    modelCandidates: string[],
-  ): Promise<any> {
-    for (const modelName of modelCandidates) {
-      try {
-        const { data } = await axios.post(
-          OLLAMA_URL,
-          { model: modelName, system: PATTERN_SYSTEM_PROMPT, prompt: userPrompt, stream: false },
-          { timeout: OLLAMA_TIMEOUT, headers: { 'Content-Type': 'application/json' } },
-        );
-        const text = ((data as any).response ?? '').trim();
-        if (!text) throw new Error('Empty response from Ollama');
-        this.logger.debug(`Pattern model used: ${modelName}`);
-        return this.parseOllamaJson(text, ` patient=${patientId}`);
-      } catch (err) {
-        if (axios.isAxiosError(err)) {
-          const status = err.response?.status;
-          const payload = JSON.stringify(err.response?.data ?? {});
-          const isModelNotFound =
-            (status === 400 || status === 404) &&
-            /model\s+['\"]?.*['\"]?\s+not\s+found|pull/i.test(payload);
-
-          if (isModelNotFound) {
-            this.logger.warn(`Pattern model not found: ${modelName}. Trying next model.`);
-            continue;
-          }
-
-          if (status === 408 || status === 504) {
-            this.logger.warn(`Pattern model timed out: ${modelName}. Trying next model.`);
-            continue;
-          }
-        }
-
-        if (err instanceof Error && /No JSON object found|Unexpected token/i.test(err.message)) {
-          this.logger.warn(`Pattern model returned invalid JSON: ${modelName}. Trying next model.`);
-          continue;
-        }
-
-        throw err;
-      }
-    }
-
-    throw new Error('No usable response from any Ollama model candidate');
-  }
-
-  private async callGeminiPattern(userPrompt: string, patientId: string): Promise<any> {
-    const apiKey = this.configService.get<string>('GEMINI_API_KEY');
-    if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
-
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const geminiCandidates = this.getGeminiPatternModelCandidates();
-
-    for (const modelName of geminiCandidates) {
-      try {
-        const model = genAI.getGenerativeModel({
-          model: modelName,
-          generationConfig: { responseMimeType: 'application/json' },
-          systemInstruction: PATTERN_SYSTEM_PROMPT,
-        });
-
-        const result = await model.generateContent(userPrompt);
-        const text = result.response.text();
-        if (!text) throw new Error('Empty response from Gemini');
-        this.logger.debug(`Pattern model used: Gemini/${modelName}`);
-        return this.parseOllamaJson(text, ` patient=${patientId}`);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const isModelNotFound =
-          message.includes('[404 Not Found]') ||
-          /model[s]?\/.+\s+is\s+not\s+found/i.test(message);
-
-        if (isModelNotFound) {
-          this.logger.warn(`Gemini model not available: ${modelName}. Trying next.`);
-          continue;
-        }
-
-        this.logger.debug(`Gemini model ${modelName} failed: ${message}`);
-        continue;
-      }
-    }
-
-    throw new Error('No usable response from any Gemini model candidate');
   }
 
   // ── Main: analyzePatterns ────────────────────────────────────────────────
@@ -527,22 +438,39 @@ export class AiPatternService {
     const modelCandidates = this.getOllamaPatternModelCandidates();
 
     try {
-      parsedResult = await this.callGeminiPattern(userPrompt, patientId);
-    } catch (gemErr) {
-      this.logger.warn(`Gemini unavailable, trying Ollama: ${String(gemErr)}`);
-      try {
-        parsedResult = await this.callOllamaPattern(
-          userPrompt,
-          patientId,
-          modelCandidates,
-        );
-      } catch (err) {
-        this.logger.warn(
-          `Ollama unavailable, using fallback pattern analysis: ${String(err)}`,
-        );
-        parsedResult = this.fallbackPatternAnalysis(localStats);
-        isFallback = true;
+      for (const modelName of modelCandidates) {
+        try {
+          const { data } = await axios.post(
+            OLLAMA_URL,
+            { model: modelName, system: PATTERN_SYSTEM_PROMPT, prompt: userPrompt, stream: false },
+            { timeout: OLLAMA_TIMEOUT, headers: { 'Content-Type': 'application/json' } },
+          );
+          const text = ((data as any).response ?? '').trim();
+          if (!text) throw new Error('Empty response from Ollama');
+          this.logger.debug(`Pattern model used: ${modelName}`);
+          parsedResult = this.parseOllamaJson(text, ` patient=${patientId}`);
+          break;
+        } catch (err) {
+          if (axios.isAxiosError(err)) {
+            const status = err.response?.status;
+            const payload = JSON.stringify(err.response?.data ?? {});
+            const isModelNotFound =
+              status === 404 && /model\s+'.*'\s+not\s+found/i.test(payload);
+
+            if (isModelNotFound) {
+              this.logger.warn(`Pattern model not found: ${modelName}. Trying next model.`);
+              continue;
+            }
+          }
+          throw err;
+        }
       }
+    } catch (err) {
+      this.logger.warn(
+        `Ollama unavailable, using fallback pattern analysis: ${String(err)}`,
+      );
+      parsedResult = this.fallbackPatternAnalysis(localStats);
+      isFallback = true;
     }
 
     // ── Step 5: Save & return ────────────────────────────────────────────
@@ -736,16 +664,10 @@ export class AiPatternService {
   }
 
   private getOllamaPatternModelCandidates(): string[] {
-    const envModels = (process.env.OLLAMA_PATTERN_MODELS ?? '')
-      .split(',')
-      .map((v) => v.trim())
-      .filter(Boolean);
-
     const ordered = [
       'llava:latest',
       'llava:13b',
       'llava',
-      ...envModels,
       'llama3.1:8b',
       'llama3.2:3b',
       'llama3.1',
@@ -754,20 +676,6 @@ export class AiPatternService {
       'qwen2.5:7b',
     ].filter((v): v is string => Boolean(v && v.trim()));
     return [...new Set(ordered.map((v) => v.trim()))];
-  }
-
-  private getGeminiPatternModelCandidates(): string[] {
-    const configured = this.configService.get<string>('GEMINI_MODEL')?.trim();
-    const ordered = [
-      configured,
-      'gemini-1.5-pro',
-      'gemini-1.5-flash',
-      'gemini-1.5-flash-latest',
-      'gemini-2.0-flash',
-      'gemini-2.0-flash-lite',
-    ].filter((v): v is string => Boolean(v));
-
-    return [...new Set(ordered)];
   }
 
   // ── getLatestAnalysis ────────────────────────────────────────────────────

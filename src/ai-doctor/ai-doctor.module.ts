@@ -14,6 +14,7 @@ import { GlucoseModule } from '../glucose/glucose.module';
 import { NutritionModule } from '../nutrition/nutrition.module';
 import { MedecinsModule } from '../medecins/medecins.module';
 import { AuthModule } from '../auth/auth.module';
+import { PatientsModule } from '../patients/patients.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { AuthModule } from '../auth/auth.module';
     NutritionModule,  // exports NutritionService
     MedecinsModule,   // exports MedecinsService (listePatients, ownership check)
     AuthModule,       // provides Medecin discriminator model
+    PatientsModule,
   ],
   controllers: [AiDoctorController],
   providers: [AiDoctorService],

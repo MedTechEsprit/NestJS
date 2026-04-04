@@ -143,4 +143,25 @@ export class AiDoctorController {
       pagination.limit ?? 10,
     );
   }
+
+  @Get('report/:patientId')
+  @ApiOperation({
+    summary: 'Generer un rapport medical detaille d\'un patient (Gemini)',
+    description:
+      'Construit un rapport clinique structure en utilisant les donnees du patient ' +
+      '(profil, glycemie, nutrition, prediction) et Gemini.',
+  })
+  @ApiParam({ name: 'patientId', description: 'ID du patient a analyser' })
+  @ApiResponse({ status: 200, description: 'Rapport medical genere avec succes' })
+  @ApiResponse({ status: 403, description: 'Patient non dans votre liste' })
+  @ApiResponse({ status: 503, description: 'Service Gemini indisponible' })
+  async getPatientMedicalReport(
+    @CurrentUser('_id') doctorId: string,
+    @Param('patientId') patientId: string,
+  ) {
+    return this.aiDoctorService.generatePatientMedicalReport(
+      String(doctorId),
+      patientId,
+    );
+  }
 }
