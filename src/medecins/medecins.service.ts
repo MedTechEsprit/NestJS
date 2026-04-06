@@ -2,7 +2,9 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
@@ -20,14 +22,58 @@ import {
   PatientStatus, 
   RiskLevel 
 } from './dto/patient-with-status.dto';
+import { MedecinBoostType } from './dto/activate-medecin-boost.dto';
+import {
+  MedecinBoostSubscription,
+  MedecinBoostSubscriptionDocument,
+} from './schemas/medecin-boost-subscription.schema';
+const Stripe = require('stripe');
+
+const MEDECIN_BOOST_PLANS: Record<
+  MedecinBoostType,
+  { label: string; days: number; price: number }
+> = {
+  boost_7d: {
+    label: 'Boost 7 jours',
+    days: 7,
+    price: 12,
+  },
+  boost_15d: {
+    label: 'Boost 15 jours',
+    days: 15,
+    price: 20,
+  },
+  boost_30d: {
+    label: 'Boost 30 jours',
+    days: 30,
+    price: 35,
+  },
+};
 
 @Injectable()
 export class MedecinsService {
+  private readonly stripe: any | null;
+  private readonly boostWebhookSecret: string;
+
   constructor(
     @InjectModel(Medecin.name) private medecinModel: Model<MedecinDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(MedecinBoostSubscription.name)
+    private readonly medecinBoostSubscriptionModel: Model<MedecinBoostSubscriptionDocument>,
     private glucoseService: GlucoseService,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    const stripeSecret = this.configService.get<string>('STRIPE_SECRET_KEY');
+    this.stripe = stripeSecret
+      ? new Stripe(stripeSecret, {
+          apiVersion: '2024-06-20',
+        })
+      : null;
+    this.boostWebhookSecret =
+      this.configService.get<string>('STRIPE_MEDECIN_BOOST_WEBHOOK_SECRET') ||
+      this.configService.get<string>('STRIPE_WEBHOOK_SECRET') ||
+      '';
+  }
 
   async create(createMedecinDto: CreateMedecinDto): Promise<Partial<Medecin>> {
     const { email, motDePasse, numeroOrdre, ...rest } = createMedecinDto;
@@ -70,6 +116,8 @@ export class MedecinsService {
     paginationDto: PaginationDto,
     specialite?: string,
   ): Promise<PaginatedResult<Partial<Medecin>>> {
+    await this.refreshExpiredBoosts();
+
     const { page = 1, limit = 10 } = paginationDto;
     const skip = (page - 1) * limit;
 
@@ -86,7 +134,7 @@ export class MedecinsService {
         .populate('listePatients', 'nom prenom email')
         .skip(skip)
         .limit(limit)
-        .sort({ noteMoyenne: -1, createdAt: -1 })
+        .sort({ isSuggested: -1, boostExpiresAt: -1, noteMoyenne: -1, createdAt: -1 })
         .exec(),
       this.userModel.countDocuments(filter).exec(),
     ]);
@@ -101,6 +149,8 @@ export class MedecinsService {
   }
 
   async findOne(id: string): Promise<Partial<Medecin>> {
+    await this.refreshExpiredBoosts();
+
     // Use userModel with case-insensitive role filter
     const medecin = await this.userModel
       .findOne({
@@ -180,15 +230,385 @@ export class MedecinsService {
   }
 
   async getMyDoctors(patientId: string): Promise<any[]> {
+    await this.refreshExpiredBoosts();
+
     const doctors = await this.userModel
       .find({
         role: { $regex: '^medecin$', $options: 'i' },
         listePatients: new Types.ObjectId(patientId),
       })
-      .select('nom prenom email telephone specialite clinique adresseCabinet description noteMoyenne photoProfil')
+      .select('nom prenom email telephone specialite clinique adresseCabinet description noteMoyenne photoProfil isSuggested boostType boostExpiresAt')
+      .sort({ isSuggested: -1, boostExpiresAt: -1, noteMoyenne: -1 })
       .lean()
       .exec();
     return doctors;
+  }
+
+  getBoostPlans() {
+    const currency = (
+      this.configService.get<string>('STRIPE_MEDECIN_BOOST_CURRENCY') || 'eur'
+    ).toUpperCase();
+
+    return Object.entries(MEDECIN_BOOST_PLANS).map(([boostType, plan]) => ({
+      boostType,
+      label: plan.label,
+      days: plan.days,
+      price: plan.price,
+      currency,
+    }));
+  }
+
+  async createBoostCheckoutSession(
+    medecinId: string,
+    boostType: MedecinBoostType,
+    successUrl?: string,
+    cancelUrl?: string,
+  ) {
+    const plan = MEDECIN_BOOST_PLANS[boostType];
+    if (!plan) {
+      throw new BadRequestException('Type de boost médecin invalide');
+    }
+
+    const stripe = this.getStripeClient();
+    const medecin = await this.userModel
+      .findOne({
+        _id: new Types.ObjectId(medecinId),
+        role: { $regex: '^medecin$', $options: 'i' },
+      })
+      .exec();
+
+    if (!medecin) {
+      throw new NotFoundException('Médecin non trouvé');
+    }
+
+    const medecinObjectId = new Types.ObjectId(medecinId);
+    let boostSub = await this.medecinBoostSubscriptionModel.findOne({ medecinId: medecinObjectId });
+
+    const defaultClientUrl = this.configService.get<string>('STRIPE_CLIENT_URL') || 'http://localhost:5173';
+    const stripeSuccessUrl =
+      successUrl || `${defaultClientUrl}/doctor-boost-success?session_id={CHECKOUT_SESSION_ID}`;
+    const stripeCancelUrl = cancelUrl || `${defaultClientUrl}/doctor-boost-cancel`;
+
+    const customerId = await this.ensureStripeCustomer(medecin, boostSub?.stripeCustomerId);
+    const currency = (
+      this.configService.get<string>('STRIPE_MEDECIN_BOOST_CURRENCY') || 'eur'
+    ).toLowerCase();
+    const unitAmount = currency === 'tnd' ? Math.round(plan.price * 1000) : Math.round(plan.price * 100);
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer: customerId,
+      payment_method_types: ['card'],
+      success_url: stripeSuccessUrl,
+      cancel_url: stripeCancelUrl,
+      client_reference_id: medecinId,
+      metadata: {
+        medecinId,
+        boostType,
+        planLabel: plan.label,
+        planDays: String(plan.days),
+      },
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency,
+            unit_amount: unitAmount,
+            product_data: {
+              name: `DiabCare ${plan.label}`,
+              description: `Mise en avant profil médecin suggéré pendant ${plan.days} jours`,
+            },
+          },
+        },
+      ],
+    });
+
+    if (!boostSub) {
+      boostSub = new this.medecinBoostSubscriptionModel({
+        medecinId: medecinObjectId,
+        boostType,
+        planName: plan.label,
+        amount: plan.price,
+        currency,
+      });
+    }
+
+    boostSub.boostType = boostType;
+    boostSub.planName = plan.label;
+    boostSub.amount = plan.price;
+    boostSub.currency = currency;
+    boostSub.stripeCustomerId = customerId;
+    boostSub.latestCheckoutSessionId = session.id;
+    boostSub.status = 'pending_checkout';
+    boostSub.isActive = false;
+    await boostSub.save();
+
+    return {
+      checkoutUrl: session.url,
+      sessionId: session.id,
+      boostType,
+      label: plan.label,
+      price: plan.price,
+      currency: currency.toUpperCase(),
+      publishableKey: this.configService.get<string>('STRIPE_PUBLISHABLE_KEY') || '',
+    };
+  }
+
+  async verifyBoostCheckoutSession(medecinId: string, sessionId: string) {
+    const stripe = this.getStripeClient();
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    const metadataMedecinId = session.metadata?.medecinId || session.client_reference_id;
+    if (!metadataMedecinId || metadataMedecinId !== medecinId) {
+      throw new BadRequestException('Session Stripe invalide pour ce médecin');
+    }
+
+    if (session.payment_status !== 'paid' && session.status !== 'complete') {
+      return this.getBoostStatus(medecinId);
+    }
+
+    await this.syncBoostFromCheckoutSession(session.id);
+    return this.getBoostStatus(medecinId);
+  }
+
+  async verifyLatestBoostCheckoutSession(medecinId: string) {
+    const boostSub = await this.medecinBoostSubscriptionModel.findOne({
+      medecinId: new Types.ObjectId(medecinId),
+    });
+
+    if (!boostSub?.latestCheckoutSessionId) {
+      return this.getBoostStatus(medecinId);
+    }
+
+    return this.verifyBoostCheckoutSession(medecinId, boostSub.latestCheckoutSessionId);
+  }
+
+  async handleBoostWebhook(rawBody: Buffer, signature: string) {
+    const stripe = this.getStripeClient();
+    if (!this.boostWebhookSecret) {
+      throw new BadRequestException('Secret webhook Stripe boost médecin non configuré');
+    }
+
+    let event: any;
+    try {
+      event = stripe.webhooks.constructEvent(rawBody, signature, this.boostWebhookSecret);
+    } catch {
+      throw new BadRequestException('Signature Stripe invalide');
+    }
+
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object as any;
+      if (session?.id) {
+        await this.syncBoostFromCheckoutSession(session.id);
+      }
+    }
+
+    return { received: true };
+  }
+
+  async getBoostStatus(medecinId: string) {
+    await this.refreshExpiredBoosts();
+
+    const [medecin, boostSub] = await Promise.all([
+      this.userModel
+        .findOne({
+          _id: new Types.ObjectId(medecinId),
+          role: { $regex: '^medecin$', $options: 'i' },
+        })
+        .select('isSuggested boostType boostActivatedAt boostExpiresAt')
+        .lean()
+        .exec(),
+      this.medecinBoostSubscriptionModel
+        .findOne({ medecinId: new Types.ObjectId(medecinId) })
+        .lean()
+        .exec(),
+    ]);
+
+    if (!medecin) {
+      throw new NotFoundException('Médecin non trouvé');
+    }
+
+    const boostData = medecin as any;
+    const now = new Date();
+    const isActive =
+      boostData.isSuggested === true &&
+      boostData.boostType &&
+      boostData.boostType !== 'free' &&
+      boostData.boostExpiresAt &&
+      new Date(boostData.boostExpiresAt).getTime() > now.getTime();
+
+    const remainingMs = isActive
+      ? new Date(boostData.boostExpiresAt).getTime() - now.getTime()
+      : 0;
+    const remainingDays = isActive
+      ? Math.max(1, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)))
+      : 0;
+
+    return {
+      isActive,
+      isSuggested: isActive,
+      boostType: isActive ? boostData.boostType : 'free',
+      startsAt: isActive ? boostData.boostActivatedAt : null,
+      expiresAt: isActive ? boostData.boostExpiresAt : null,
+      remainingDays,
+      price:
+        isActive && boostData.boostType && MEDECIN_BOOST_PLANS[boostData.boostType as MedecinBoostType]
+          ? MEDECIN_BOOST_PLANS[boostData.boostType as MedecinBoostType].price
+          : null,
+      currency: ((boostSub as any)?.currency || this.configService.get<string>('STRIPE_MEDECIN_BOOST_CURRENCY') || 'eur').toUpperCase(),
+      paymentStatus: (boostSub as any)?.status || 'inactive',
+      latestCheckoutSessionId: (boostSub as any)?.latestCheckoutSessionId || null,
+      lastPaymentAt: (boostSub as any)?.lastPaymentAt || null,
+    };
+  }
+
+  private async refreshExpiredBoosts(): Promise<void> {
+    const now = new Date();
+    await this.userModel.updateMany(
+      {
+        role: { $regex: '^medecin$', $options: 'i' },
+        isSuggested: true,
+        boostExpiresAt: { $lte: now },
+      },
+      {
+        $set: {
+          isSuggested: false,
+          boostType: 'free',
+        },
+        $unset: {
+          boostActivatedAt: '',
+          boostExpiresAt: '',
+        },
+      },
+    );
+
+    await this.medecinBoostSubscriptionModel.updateMany(
+      {
+        isActive: true,
+        expiresAt: { $lte: now },
+      },
+      {
+        $set: {
+          isActive: false,
+          status: 'expired',
+        },
+      },
+    );
+  }
+
+  private getStripeClient() {
+    if (!this.stripe) {
+      throw new BadRequestException(
+        'Paiement Stripe indisponible: STRIPE_SECRET_KEY non configurée',
+      );
+    }
+
+    return this.stripe;
+  }
+
+  private async ensureStripeCustomer(user: any, existingCustomerId?: string) {
+    const stripe = this.getStripeClient();
+    if (existingCustomerId) {
+      return existingCustomerId;
+    }
+
+    const customer = await stripe.customers.create({
+      email: user.email,
+      name: `${user.prenom || ''} ${user.nom || ''}`.trim(),
+      metadata: {
+        medecinId: String(user._id),
+      },
+    });
+
+    return customer.id;
+  }
+
+  private async syncBoostFromCheckoutSession(sessionId: string) {
+    const stripe = this.getStripeClient();
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    const medecinId =
+      (session.metadata?.medecinId as string | undefined) ||
+      (session.client_reference_id as string | undefined);
+    const boostType = session.metadata?.boostType as MedecinBoostType | undefined;
+
+    if (!medecinId || !boostType) {
+      return;
+    }
+
+    const plan = MEDECIN_BOOST_PLANS[boostType];
+    if (!plan) {
+      return;
+    }
+
+    const paymentPaid = session.payment_status === 'paid' || session.status === 'complete';
+    if (!paymentPaid) {
+      return;
+    }
+
+    const medecinObjectId = new Types.ObjectId(medecinId);
+    const existingMedecin = await this.userModel
+      .findOne({
+        _id: medecinObjectId,
+        role: { $regex: '^medecin$', $options: 'i' },
+      })
+      .select('boostExpiresAt')
+      .lean()
+      .exec();
+
+    if (!existingMedecin) {
+      throw new NotFoundException('Médecin non trouvé');
+    }
+
+    const now = new Date();
+    const currentExpiry = (existingMedecin as any).boostExpiresAt
+      ? new Date((existingMedecin as any).boostExpiresAt)
+      : null;
+    const startAt = currentExpiry && currentExpiry.getTime() > now.getTime() ? currentExpiry : now;
+    const expiresAt = new Date(startAt.getTime() + plan.days * 24 * 60 * 60 * 1000);
+
+    const currency = session.currency || this.configService.get<string>('STRIPE_MEDECIN_BOOST_CURRENCY') || 'eur';
+    const amountTotal = session.amount_total || 0;
+    const normalizedAmount = currency.toLowerCase() === 'tnd' ? amountTotal / 1000 : amountTotal / 100;
+
+    await this.userModel.updateOne(
+      { _id: medecinObjectId },
+      {
+        $set: {
+          isSuggested: true,
+          boostType,
+          boostActivatedAt: now,
+          boostExpiresAt: expiresAt,
+        },
+      },
+    );
+
+    await this.medecinBoostSubscriptionModel.findOneAndUpdate(
+      { medecinId: medecinObjectId },
+      {
+        medecinId: medecinObjectId,
+        boostType,
+        planName: plan.label,
+        amount: normalizedAmount,
+        currency: currency.toLowerCase(),
+        isActive: true,
+        status: 'paid',
+        activatedAt: now,
+        expiresAt,
+        lastPaymentAt: new Date(),
+        stripeCustomerId:
+          typeof session.customer === 'string' ? session.customer : session.customer?.id,
+        stripePaymentIntentId:
+          typeof session.payment_intent === 'string'
+            ? session.payment_intent
+            : session.payment_intent?.id,
+        latestCheckoutSessionId: session.id,
+      },
+      {
+        upsert: true,
+        new: true,
+      },
+    );
   }
 
   async addPatient(medecinId: string, patientId: string): Promise<Partial<Medecin>> {

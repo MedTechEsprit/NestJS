@@ -13,10 +13,11 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Role } from '../common/enums/role.enum';
 import type { UserDocument } from '../users/schemas/user.schema';
+import { PremiumGuard } from '../subscriptions/guards/premium.guard';
 
 @ApiTags('AI Food Analyzer')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PremiumGuard)
 @Controller('ai-food-analyzer')
 export class AiFoodAnalyzerController {
   constructor(private readonly aiFoodAnalyzerService: AiFoodAnalyzerService) {}

@@ -20,6 +20,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Role } from '../common/enums/role.enum';
+import { PremiumGuard } from '../subscriptions/guards/premium.guard';
 
 @ApiTags('AI Pattern Analysis')
 @Controller('ai-pattern')
@@ -28,7 +29,7 @@ export class AiPatternController {
 
   // POST /api/ai-pattern — manual trigger by patient
   @Post()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PremiumGuard)
   @Roles(Role.PATIENT)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Analyser les patterns glycémiques des 30 derniers jours' })
@@ -41,7 +42,7 @@ export class AiPatternController {
 
   // GET /api/ai-pattern/latest
   @Get('latest')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PremiumGuard)
   @Roles(Role.PATIENT, Role.MEDECIN)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Récupérer la dernière analyse de patterns' })
@@ -51,7 +52,7 @@ export class AiPatternController {
 
   // GET /api/ai-pattern/history
   @Get('history')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PremiumGuard)
   @Roles(Role.PATIENT, Role.MEDECIN)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Historique des analyses de patterns' })
@@ -67,7 +68,7 @@ export class AiPatternController {
 
   // GET /api/ai-pattern/:id
   @Get(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PremiumGuard)
   @Roles(Role.PATIENT, Role.MEDECIN)
   @ApiBearerAuth()
   @ApiOperation({ summary: "Détail d'une analyse de patterns" })

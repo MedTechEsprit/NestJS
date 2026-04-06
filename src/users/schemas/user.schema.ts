@@ -44,6 +44,25 @@ export class User {
   @Prop({ default: StatutCompte.ACTIF, enum: StatutCompte })
   statutCompte: StatutCompte;
 
+  @ApiProperty({ description: 'Profil suggéré (mise en avant)' })
+  @Prop({ default: false })
+  isSuggested: boolean;
+
+  @ApiProperty({ description: 'Type de boost actif', enum: ['free', 'boost_7d', 'boost_15d', 'boost_30d', 'boost_24h', 'boost_week', 'boost_month'] })
+  @Prop({
+    default: 'free',
+    enum: ['free', 'boost_7d', 'boost_15d', 'boost_30d', 'boost_24h', 'boost_week', 'boost_month'],
+  })
+  boostType: string;
+
+  @ApiProperty({ description: 'Date d\'activation du boost' })
+  @Prop()
+  boostActivatedAt?: Date;
+
+  @ApiProperty({ description: 'Date d\'expiration du boost' })
+  @Prop()
+  boostExpiresAt?: Date;
+
   @ApiProperty({ description: 'Date de création' })
   createdAt?: Date;
 

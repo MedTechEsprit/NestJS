@@ -149,14 +149,6 @@ export class Pharmacien extends User {
   @Prop({ default: 5 })
   visibilityRadius: number;
 
-  @ApiProperty({ description: 'Date d\'expiration du boost' })
-  @Prop()
-  boostExpiresAt?: Date;
-
-  @ApiProperty({ description: 'Type de boost actif', enum: ['free', 'boost_24h', 'boost_week', 'boost_month'] })
-  @Prop({ default: 'free', enum: ['free', 'boost_24h', 'boost_week', 'boost_month'] })
-  boostType: string;
-
   @ApiProperty({ description: 'Image de profil de la pharmacie' })
   @Prop()
   profileImage?: string;

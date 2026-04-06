@@ -12,10 +12,11 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/enums/role.enum';
+import { PremiumGuard } from '../subscriptions/guards/premium.guard';
 
 @ApiTags('AI Chat')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PremiumGuard)
 @Controller('ai-chat')
 export class AiChatController {
   constructor(private readonly aiChatService: AiChatService) {}

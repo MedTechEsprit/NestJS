@@ -20,10 +20,11 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Role } from '../common/enums/role.enum';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { PremiumGuard } from '../subscriptions/guards/premium.guard';
 
 @ApiTags('AI Prediction')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PremiumGuard)
 @Controller('ai-prediction')
 export class AiPredictionController {
   constructor(private readonly aiPredictionService: AiPredictionService) {}

@@ -30,6 +30,9 @@ import { AiDoctorModule } from './ai-doctor/ai-doctor.module';
 import { AiPatternModule } from './ai-pattern/ai-pattern.module';
 import { ProductsModule } from './products/products.module';
 import { OrdersModule } from './orders/orders.module';
+import { SubscriptionsModule } from './subscriptions/subscriptions.module';
+import { ComplaintsModule } from './complaints/complaints.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -66,6 +69,9 @@ import { OrdersModule } from './orders/orders.module';
     AiPatternModule,
     ProductsModule,
     OrdersModule,
+    SubscriptionsModule,
+    ComplaintsModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],
