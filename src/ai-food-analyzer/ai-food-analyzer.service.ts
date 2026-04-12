@@ -422,6 +422,7 @@ export class AiFoodAnalyzerService {
     const ollamaUrl =
       this.configService.get<string>('OLLAMA_URL') ??
       'http://localhost:11434/api/generate';
+    const isChatCompletionsEndpoint = /\/v1\/chat\/completions\/?$/.test(ollamaUrl);
     const candidateModels = this.getOllamaVisionModelCandidates();
 
     const ollamaPrompt =
@@ -445,17 +446,68 @@ export class AiFoodAnalyzerService {
     ollamaResponseText = '';
     for (const modelName of candidateModels) {
       try {
-        const { data } = await axios.post(
-          ollamaUrl,
-          {
-            model: modelName,
-            prompt: ollamaPrompt,
-            images: [base64Image],
-            stream: false,
-          },
-          { timeout: 120_000, headers: { 'Content-Type': 'application/json' } },
-        );
-        ollamaResponseText = (data as { response: string }).response ?? '';
+        let data: unknown;
+
+        if (isChatCompletionsEndpoint) {
+          const resp = await axios.post(
+            ollamaUrl,
+            {
+              model: modelName,
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: ollamaPrompt },
+                    {
+                      type: 'image_url',
+                      image_url: { url: `data:image/jpeg;base64,${base64Image}` },
+                    },
+                  ],
+                },
+              ],
+              stream: false,
+            },
+            { timeout: 120_000, headers: { 'Content-Type': 'application/json' } },
+          );
+          data = resp.data;
+
+          const content = (data as { choices?: Array<{ message?: { content?: unknown } }> })
+            .choices?.[0]?.message?.content;
+          if (typeof content === 'string') {
+            ollamaResponseText = content;
+          } else if (Array.isArray(content)) {
+            ollamaResponseText = content
+              .map((part) => {
+                if (typeof part === 'string') return part;
+                if (part && typeof part === 'object' && 'text' in part) {
+                  return String((part as { text?: unknown }).text ?? '');
+                }
+                return '';
+              })
+              .join(' ')
+              .trim();
+          } else {
+            ollamaResponseText = '';
+          }
+        } else {
+          const resp = await axios.post(
+            ollamaUrl,
+            {
+              model: modelName,
+              prompt: ollamaPrompt,
+              images: [base64Image],
+              stream: false,
+            },
+            { timeout: 120_000, headers: { 'Content-Type': 'application/json' } },
+          );
+          data = resp.data;
+          ollamaResponseText = (data as { response: string }).response ?? '';
+        }
+
+        if (!ollamaResponseText.trim()) {
+          throw new Error('Empty vision response');
+        }
+
         this.logger.debug(`Ollama vision model used: ${modelName}`);
         break;
       } catch (error) {
@@ -554,6 +606,7 @@ export class AiFoodAnalyzerService {
     const configured = this.configService.get<string>('OLLAMA_MODEL')?.trim();
     const ordered = [
       configured,
+      'gemma4:e4b',
       'llava:13b',
       'llava:latest',
       'llava',
@@ -662,6 +715,61 @@ export class AiFoodAnalyzerService {
       `IMPORTANT: Use the exact required field names from system rules; no aliases and no empty critical strings.\n` +
       `Return only the JSON object, nothing else.`;
 
+    // MIGRATED TO GEMMA4
+    const gemmaModel = this.getGemmaModelCandidates()[0] ?? 'gemma4:e4b';
+    // MIGRATED TO GEMMA4
+    const gemmaUrl =
+      this.configService.get<string>('OLLAMA_URL') ??
+      'https://semiexperimental-rolande-superbusily.ngrok-free.dev/v1/chat/completions';
+
+    // MIGRATED TO GEMMA4
+    // Try Gemma first (OpenAI-compatible endpoint), then fallback to Gemini.
+    try {
+      // MIGRATED TO GEMMA4
+      const { data } = await axios.post(
+        gemmaUrl,
+        {
+          model: gemmaModel,
+          messages: [
+            { role: 'system', content: GEMINI_SYSTEM_INSTRUCTION },
+            { role: 'user', content: userPrompt },
+          ],
+          stream: false,
+        },
+        { timeout: 240_000, headers: { 'Content-Type': 'application/json' } },
+      );
+
+      // MIGRATED TO GEMMA4
+      const text =
+        (
+          (data as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]
+            ?.message?.content ?? ''
+        ).trim();
+      if (!text) {
+        throw new Error('Empty response from Gemma endpoint');
+      }
+
+      this.logGeminiRawResponse(text, `gemma/${gemmaModel}`);
+      const clean = text.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(clean) as GeminiReport;
+      const normalized = this.normalizeGeminiReport(parsed);
+      const completeness = this.validateGeminiCompleteness(normalized);
+      if (!completeness.ok) {
+        throw new Error(`Gemma response incomplete: ${completeness.missing.join(', ')}`);
+      }
+
+      const isEmpty = this.isGeminiResponseEmpty(normalized);
+      if (isEmpty) {
+        throw new Error('Gemma returned zero nutritional data');
+      }
+
+      this.logger.debug(`Gemma model used: ${gemmaModel}`);
+      return { report: normalized, isFallback: false };
+    } catch (gemmaError) {
+      const reason = gemmaError instanceof Error ? gemmaError.message : String(gemmaError);
+      this.logger.warn(`Gemma report generation failed, falling back to Gemini: ${reason}`);
+    }
+
     const apiKey = this.configService.get<string>('GEMINI_API_KEY');
     if (!apiKey) {
       this.logger.error('GEMINI_API_KEY is missing. Using fallback report.');
@@ -735,6 +843,11 @@ export class AiFoodAnalyzerService {
       this.logger.error(`Gemini report generation failed: ${reason}`);
       return { report: AiFoodAnalyzerService.FALLBACK_REPORT, isFallback: true };
     }
+  }
+
+  private getGemmaModelCandidates(): string[] {
+    // MIGRATED TO GEMMA4
+    return ['gemma4:e4b'];
   }
 
   private getGeminiModelCandidates(): string[] {

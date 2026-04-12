@@ -11,7 +11,10 @@ import { NutritionService } from '../nutrition/nutrition.service';
 import { PaginatedResult } from '../common/dto/pagination.dto';
 import { Meal } from '../nutrition/schemas/meal.schema';
 
-const OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://localhost:11434/api/generate';
+// MIGRATED TO GEMMA4
+const OLLAMA_URL =
+  process.env.OLLAMA_URL ??
+  'https://semiexperimental-rolande-superbusily.ngrok-free.dev/v1/chat/completions';
 const GLUCOSE_RECORDS_LIMIT = 20;
 const MEALS_LIMIT = 10;
 
@@ -152,43 +155,33 @@ export class AiChatService {
       .replace('{RECENT_MEALS}', recentMealsText)
       .replace('{NUTRITION_STATS}', nutritionStatsText);
 
-    // Step 6 — Call Ollama with model fallback
+    // Step 6 — Call OpenAI-compatible endpoint
     let aiResponse: string = '';
-    const modelCandidates = this.getOllamaChatModelCandidates();
-    let lastError: unknown = null;
+    // MIGRATED TO GEMMA4
+    const modelName = this.getOllamaChatModelCandidates()[0] ?? 'gemma4:e4b';
 
     try {
-      for (const modelName of modelCandidates) {
-        try {
-          const { data } = await axios.post(
-            OLLAMA_URL,
-            { model: modelName, system: systemPrompt, prompt: message, stream: false },
-            { timeout: 240_000, headers: { 'Content-Type': 'application/json' } },
-          );
-          aiResponse = ((data as { response?: string }).response ?? '').trim();
-          if (!aiResponse) throw new Error('Empty response from Ollama');
-          this.logger.debug(`Chat model used: ${modelName}`);
-          break;
-        } catch (err) {
-          lastError = err;
-          if (axios.isAxiosError(err)) {
-            const status = err.response?.status;
-            const payload = JSON.stringify(err.response?.data ?? {});
-            const isModelNotFound =
-              status === 404 && /model\s+'.*'\s+not\s+found/i.test(payload);
-
-            if (isModelNotFound) {
-              this.logger.warn(`Chat model not found: ${modelName}. Trying next model.`);
-              continue;
-            }
-          }
-          throw err;
-        }
-      }
-
-      if (!aiResponse) {
-        throw new Error(`No usable Ollama chat model found. Tried: ${modelCandidates.join(', ')}`);
-      }
+      // MIGRATED TO GEMMA4
+      const { data } = await axios.post(
+        OLLAMA_URL,
+        {
+          model: modelName,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: message },
+          ],
+          stream: false,
+        },
+        { timeout: 900_000, headers: { 'Content-Type': 'application/json' } },
+      );
+      // MIGRATED TO GEMMA4
+      aiResponse =
+        (
+          (data as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]
+            ?.message?.content ?? ''
+        ).trim();
+      if (!aiResponse) throw new Error('Empty response from AI endpoint');
+      this.logger.debug(`Chat model used: ${modelName}`);
     } catch (error) {
       if (axios.isAxiosError(error)) {
         const axiosErr = error as AxiosError;
@@ -299,18 +292,7 @@ export class AiChatService {
   }
 
   private getOllamaChatModelCandidates(): string[] {
-    const ordered = [
-      'llava:latest',
-      'llava:13b',
-      'llava',
-      'llama3.1:8b',
-      'llama3.2:3b',
-      'llama3.1',
-      'llama3.2',
-      'mistral:7b',
-      'qwen2.5:7b',
-    ].filter((v): v is string => Boolean(v && v.trim()));
-
-    return [...new Set(ordered.map((v) => v.trim()))];
+    // MIGRATED TO GEMMA4
+    return ['gemma4:e4b'];
   }
 }

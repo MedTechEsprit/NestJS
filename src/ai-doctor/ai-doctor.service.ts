@@ -25,8 +25,10 @@ import {
   AiPredictionDocument,
 } from '../ai-prediction/schemas/ai-prediction.schema';
 
+// MIGRATED TO GEMMA4
 const OLLAMA_URL =
-  process.env.OLLAMA_URL ?? 'http://localhost:11434/api/generate';
+  process.env.OLLAMA_URL ??
+  'https://semiexperimental-rolande-superbusily.ngrok-free.dev/v1/chat/completions';
 const GLUCOSE_RECORDS_PER_PATIENT = 30;
 const MEALS_PER_PATIENT = 10;
 const MAX_PATIENTS_IN_CONTEXT = 20;
@@ -723,6 +725,31 @@ export class AiDoctorService {
       } catch (error) {
         lastError = error;
         const message = error instanceof Error ? error.message : String(error);
+        const isApiKeyRejected =
+          message.includes('reported as leaked') ||
+          message.includes('PERMISSION_DENIED') ||
+          message.includes('[403 Forbidden]');
+
+        if (isApiKeyRejected) {
+          throw new HttpException(
+            'Cle Gemini invalide ou revoquee. Generez une nouvelle GEMINI_API_KEY puis redemarrez le backend.',
+            HttpStatus.SERVICE_UNAVAILABLE,
+          );
+        }
+
+        const isQuotaExceeded =
+          message.includes('429 Too Many Requests') ||
+          message.includes('Quota exceeded') ||
+          message.includes('rate-limits') ||
+          message.includes('limit: 0');
+
+        if (isQuotaExceeded) {
+          throw new HttpException(
+            'Quota Gemini depasse ou inactif (limit=0). Activez la facturation/quotas du projet Google AI ou utilisez une autre cle API.',
+            HttpStatus.SERVICE_UNAVAILABLE,
+          );
+        }
+
         const isModelNotFound =
           message.includes('[404 Not Found]') ||
           /model[s]?\/.+\s+is\s+not\s+found/i.test(message) ||
@@ -816,14 +843,22 @@ export class AiDoctorService {
   }
 
   private getGeminiModelCandidates(): string[] {
-    const configured = this.configService.get<string>('GEMINI_MODEL')?.trim();
+    const configuredRaw = this.configService.get<string>('GEMINI_MODEL')?.trim();
+    const configured = configuredRaw
+      ? configuredRaw.replace(/^models\//i, '').trim()
+      : undefined;
+
+    const normalizedConfigured =
+      configured === 'gemini-1.5-flash-latest' ? 'gemini-1.5-flash' : configured;
+
     const ordered = [
-      configured,
+      normalizedConfigured,
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
       'gemini-2.0-flash',
       'gemini-2.0-flash-lite',
       'gemini-1.5-pro',
       'gemini-1.5-flash',
-      'gemini-1.5-flash-latest',
     ].filter((v): v is string => Boolean(v));
 
     return [...new Set(ordered)];
@@ -857,12 +892,25 @@ export class AiDoctorService {
     const modelCandidates = this.getOllamaDoctorModelCandidates();
     for (const modelName of modelCandidates) {
       try {
+        // MIGRATED TO GEMMA4
         const { data } = await axios.post(
           OLLAMA_URL,
-          { model: modelName, system, prompt, stream: false },
+          {
+            model: modelName,
+            messages: [
+              { role: 'system', content: system },
+              { role: 'user', content: prompt },
+            ],
+            stream: false,
+          },
           { timeout, headers: { 'Content-Type': 'application/json' } },
         );
-        const text = ((data as { response?: string }).response ?? '').trim();
+        // MIGRATED TO GEMMA4
+        const text =
+          (
+            (data as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]
+              ?.message?.content ?? ''
+          ).trim();
         if (!text) throw new Error('Empty response from Ollama');
         this.logger.debug(`Doctor model used: ${modelName}`);
         return text;
@@ -885,15 +933,7 @@ export class AiDoctorService {
   }
 
   private getOllamaDoctorModelCandidates(): string[] {
-    const ordered = [
-      'llava:latest',
-      'llava:13b',
-      'llava',
-      'llama3.1:8b',
-      'llama3.2:3b',
-      'llama3.1',
-      'llama3.2',
-    ].filter((v): v is string => Boolean(v && v.trim()));
-    return [...new Set(ordered.map((v) => v.trim()))];
+    // MIGRATED TO GEMMA4
+    return ['gemma4:e4b'];
   }
 }
