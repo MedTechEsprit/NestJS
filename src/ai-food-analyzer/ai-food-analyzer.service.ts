@@ -420,6 +420,7 @@ export class AiFoodAnalyzerService {
     }
 
     const ollamaUrl =
+      this.configService.get<string>('OLLAMA_URL_ALT') ??
       this.configService.get<string>('OLLAMA_URL') ??
       'http://localhost:11434/api/generate';
     const isChatCompletionsEndpoint = /\/v1\/chat\/completions\/?$/.test(ollamaUrl);

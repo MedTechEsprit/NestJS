@@ -40,8 +40,8 @@ import { AdminModule } from './admin/admin.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
-    MongooseModule.forRoot(process.env.MONGODB_URI || 'mongodb://localhost:27017/diabetes'),
-   ScheduleModule.forRoot(),
+    MongooseModule.forRoot(process.env.MONGODB_URI as string),
+    ScheduleModule.forRoot(),
 
     AuthModule,
     UsersModule,

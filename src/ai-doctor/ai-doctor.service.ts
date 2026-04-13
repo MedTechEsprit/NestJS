@@ -10,7 +10,6 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import axios, { AxiosError } from 'axios';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GlucoseService } from '../glucose/glucose.service';
 import { NutritionService } from '../nutrition/nutrition.service';
 import { MedecinsService } from '../medecins/medecins.service';
@@ -27,6 +26,7 @@ import {
 
 // MIGRATED TO GEMMA4
 const OLLAMA_URL =
+  process.env.OLLAMA_URL_ALT ??
   process.env.OLLAMA_URL ??
   'https://semiexperimental-rolande-superbusily.ngrok-free.dev/v1/chat/completions';
 const GLUCOSE_RECORDS_PER_PATIENT = 30;
@@ -635,14 +635,6 @@ export class AiDoctorService {
     alerts: string[];
     physicianNotes: string;
   }> {
-    const apiKey = this.configService.get<string>('GEMINI_API_KEY');
-    if (!apiKey) {
-      throw new HttpException(
-        'Configuration Gemini manquante (GEMINI_API_KEY).',
-        HttpStatus.SERVICE_UNAVAILABLE,
-      );
-    }
-
     const profilMedical = (args.patient.profilMedical ?? {}) as Record<string, unknown>;
     const glucoseCompact = args.glucoseRecords.slice(0, 30).map((r) => ({
       value: toNum(r?.value),
@@ -689,84 +681,113 @@ export class AiDoctorService {
       `Generate a detailed medical report in French for this patient.\n` +
       `Output MUST be a strict JSON object with exactly these keys:\n` +
       `{\n` +
-      `  \"title\": string,\n` +
-      `  \"executiveSummary\": string,\n` +
-      `  \"patientOverview\": string[],\n` +
-      `  \"clinicalFindings\": string[],\n` +
-      `  \"riskAssessment\": string[],\n` +
-      `  \"treatmentPlan\": string[],\n` +
-      `  \"lifestylePlan\": string[],\n` +
-      `  \"followUpPlan\": string[],\n` +
-      `  \"alerts\": string[],\n` +
-      `  \"physicianNotes\": string\n` +
+      `  "title": string,\n` +
+      `  "executiveSummary": string,\n` +
+      `  "patientOverview": string[],\n` +
+      `  "clinicalFindings": string[],\n` +
+      `  "riskAssessment": string[],\n` +
+      `  "treatmentPlan": string[],\n` +
+      `  "lifestylePlan": string[],\n` +
+      `  "followUpPlan": string[],\n` +
+      `  "alerts": string[],\n` +
+      `  "physicianNotes": string\n` +
       `}\n` +
       `If any section has no data, return one explicit sentence in French in that section.\n` +
       `Patient JSON:\n${JSON.stringify(payload, null, 2)}`;
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const modelCandidates = this.getGeminiModelCandidates();
+    const reportOllamaUrl =
+      this.configService.get<string>('OLLAMA_URL_ALT') ??
+      this.configService.get<string>('OLLAMA_URL') ??
+      OLLAMA_URL;
+    const modelCandidates = this.getOllamaDoctorModelCandidates();
     let lastError: unknown = null;
 
     for (const modelName of modelCandidates) {
       try {
-        const model = genAI.getGenerativeModel({
-          model: modelName,
-          generationConfig: {
-            responseMimeType: 'application/json',
+        const { data } = await axios.post(
+          reportOllamaUrl,
+          {
+            model: modelName,
+            messages: [
+              { role: 'system', content: GEMINI_REPORT_SYSTEM_INSTRUCTION },
+              { role: 'user', content: prompt },
+            ],
+            stream: false,
           },
-          systemInstruction: GEMINI_REPORT_SYSTEM_INSTRUCTION,
-        });
+          { timeout: 240_000, headers: { 'Content-Type': 'application/json' } },
+        );
 
-        const result = await model.generateContent(prompt);
-        const rawText = result.response.text();
+        const content = (data as { choices?: Array<{ message?: { content?: unknown } }> })
+          .choices?.[0]?.message?.content;
+
+        const rawText =
+          typeof content === 'string'
+            ? content
+            : Array.isArray(content)
+              ? content
+                  .map((part) => {
+                    if (typeof part === 'string') return part;
+                    if (part && typeof part === 'object' && 'text' in part) {
+                      return String((part as { text?: unknown }).text ?? '');
+                    }
+                    return '';
+                  })
+                  .join(' ')
+                  .trim()
+              : '';
+
+        if (!rawText) {
+          throw new Error('Empty response from Ollama report endpoint');
+        }
+
         const clean = rawText.replace(/```json|```/g, '').trim();
-        const parsed = JSON.parse(clean) as Record<string, unknown>;
+        const jsonMatch = clean.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          throw new Error('Ollama report response did not include JSON object');
+        }
+
+        const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+        this.logger.debug(`Doctor report model used: ${modelName} (${reportOllamaUrl})`);
         return this.normalizeMedicalReport(parsed, args.patientDisplayName);
       } catch (error) {
         lastError = error;
-        const message = error instanceof Error ? error.message : String(error);
-        const isApiKeyRejected =
-          message.includes('reported as leaked') ||
-          message.includes('PERMISSION_DENIED') ||
-          message.includes('[403 Forbidden]');
 
-        if (isApiKeyRejected) {
-          throw new HttpException(
-            'Cle Gemini invalide ou revoquee. Generez une nouvelle GEMINI_API_KEY puis redemarrez le backend.',
-            HttpStatus.SERVICE_UNAVAILABLE,
+        if (axios.isAxiosError(error)) {
+          if (!error.response) {
+            const reason = error.code ?? error.message ?? 'no response';
+            throw new HttpException(
+              `Service Ollama indisponible pour le rapport medical: ${reason}`,
+              HttpStatus.SERVICE_UNAVAILABLE,
+            );
+          }
+
+          const status = error.response.status;
+          const payloadText = JSON.stringify(error.response.data ?? {});
+          const isModelNotFound =
+            status === 404 && /model\s+'.*'\s+not\s+found/i.test(payloadText);
+
+          if (isModelNotFound) {
+            this.logger.warn(`Doctor report model not found: ${modelName}. Trying next model.`);
+            continue;
+          }
+
+          this.logger.warn(
+            `Ollama report generation failed on model ${modelName} (status=${status}): ${payloadText}`,
           );
-        }
-
-        const isQuotaExceeded =
-          message.includes('429 Too Many Requests') ||
-          message.includes('Quota exceeded') ||
-          message.includes('rate-limits') ||
-          message.includes('limit: 0');
-
-        if (isQuotaExceeded) {
-          throw new HttpException(
-            'Quota Gemini depasse ou inactif (limit=0). Activez la facturation/quotas du projet Google AI ou utilisez une autre cle API.',
-            HttpStatus.SERVICE_UNAVAILABLE,
-          );
-        }
-
-        const isModelNotFound =
-          message.includes('[404 Not Found]') ||
-          /model[s]?\/.+\s+is\s+not\s+found/i.test(message) ||
-          message.includes('is not found for API version');
-
-        if (isModelNotFound) {
-          this.logger.warn(`Gemini model not available: ${modelName}. Trying next model.`);
           continue;
         }
 
-        this.logger.warn(`Gemini report generation failed on model ${modelName}: ${message}`);
+        this.logger.warn(
+          `Ollama report generation failed on model ${modelName}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
     }
 
     const reason = lastError instanceof Error ? lastError.message : String(lastError);
     throw new HttpException(
-      `Erreur Gemini lors de la génération du rapport médical: ${reason}`,
+      `Erreur Ollama lors de la génération du rapport médical: ${reason}`,
       HttpStatus.SERVICE_UNAVAILABLE,
     );
   }
@@ -840,28 +861,6 @@ export class AiDoctorService {
         'La decision finale appartient au medecin traitant.',
       ),
     };
-  }
-
-  private getGeminiModelCandidates(): string[] {
-    const configuredRaw = this.configService.get<string>('GEMINI_MODEL')?.trim();
-    const configured = configuredRaw
-      ? configuredRaw.replace(/^models\//i, '').trim()
-      : undefined;
-
-    const normalizedConfigured =
-      configured === 'gemini-1.5-flash-latest' ? 'gemini-1.5-flash' : configured;
-
-    const ordered = [
-      normalizedConfigured,
-      'gemini-2.5-flash',
-      'gemini-2.5-pro',
-      'gemini-2.0-flash',
-      'gemini-2.0-flash-lite',
-      'gemini-1.5-pro',
-      'gemini-1.5-flash',
-    ].filter((v): v is string => Boolean(v));
-
-    return [...new Set(ordered)];
   }
 
   /** Returns raw numeric stats for a patient (used by urgentCheck) */
