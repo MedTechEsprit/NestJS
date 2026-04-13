@@ -41,6 +41,7 @@ interface PatientContext {
 }
 
 const GLUCOSE_FETCH_LIMIT = 50;
+const REQUEST_TIMEOUT_MS = 1_440_000;
 
 type DetectionConfidence = 'high' | 'medium' | 'low';
 type MealContext = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'unknown';
@@ -402,7 +403,7 @@ export class AiFoodAnalyzerService {
 
       const response = await axios.get<ArrayBuffer>(imageUrl, {
         responseType: 'arraybuffer',
-        timeout: 20_000,
+        timeout: REQUEST_TIMEOUT_MS,
         headers: {
           'User-Agent':
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
@@ -468,7 +469,7 @@ export class AiFoodAnalyzerService {
               ],
               stream: false,
             },
-            { timeout: 120_000, headers: { 'Content-Type': 'application/json' } },
+            { timeout: REQUEST_TIMEOUT_MS, headers: { 'Content-Type': 'application/json' } },
           );
           data = resp.data;
 
@@ -499,7 +500,7 @@ export class AiFoodAnalyzerService {
               images: [base64Image],
               stream: false,
             },
-            { timeout: 120_000, headers: { 'Content-Type': 'application/json' } },
+            { timeout: REQUEST_TIMEOUT_MS, headers: { 'Content-Type': 'application/json' } },
           );
           data = resp.data;
           ollamaResponseText = (data as { response: string }).response ?? '';
@@ -737,7 +738,7 @@ export class AiFoodAnalyzerService {
           ],
           stream: false,
         },
-        { timeout: 240_000, headers: { 'Content-Type': 'application/json' } },
+        { timeout: REQUEST_TIMEOUT_MS, headers: { 'Content-Type': 'application/json' } },
       );
 
       // MIGRATED TO GEMMA4

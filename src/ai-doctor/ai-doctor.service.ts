@@ -29,6 +29,7 @@ const OLLAMA_URL =
   process.env.OLLAMA_URL_ALT ??
   process.env.OLLAMA_URL ??
   'https://semiexperimental-rolande-superbusily.ngrok-free.dev/v1/chat/completions';
+const OLLAMA_TIMEOUT_MS = 1_440_000;
 const GLUCOSE_RECORDS_PER_PATIENT = 30;
 const MEALS_PER_PATIENT = 10;
 const MAX_PATIENTS_IN_CONTEXT = 20;
@@ -209,7 +210,7 @@ export class AiDoctorService {
       .replace('{PATIENT_DATA}', patientData);
 
     // Step 5 — Call Ollama
-    const aiResponse = await this.callOllama(systemPrompt, message, 240_000);
+    const aiResponse = await this.callOllama(systemPrompt, message, OLLAMA_TIMEOUT_MS);
 
     // Step 6 — Persist
     await this.aiDoctorChatModel
@@ -291,7 +292,7 @@ export class AiDoctorService {
       .replace('{TOTAL_PATIENTS}', String(rawList.length))
       .replace('{PATIENT_DATA}', patientData);
 
-    const aiResponse = await this.callOllama(systemPrompt, message, 240_000);
+    const aiResponse = await this.callOllama(systemPrompt, message, OLLAMA_TIMEOUT_MS);
 
     await this.aiDoctorChatModel
       .create({
@@ -714,7 +715,7 @@ export class AiDoctorService {
             ],
             stream: false,
           },
-          { timeout: 240_000, headers: { 'Content-Type': 'application/json' } },
+          { timeout: OLLAMA_TIMEOUT_MS, headers: { 'Content-Type': 'application/json' } },
         );
 
         const content = (data as { choices?: Array<{ message?: { content?: unknown } }> })

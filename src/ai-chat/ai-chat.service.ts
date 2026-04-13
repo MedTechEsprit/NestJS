@@ -17,6 +17,7 @@ const OLLAMA_URL =
   'https://semiexperimental-rolande-superbusily.ngrok-free.dev/v1/chat/completions';
 const GLUCOSE_RECORDS_LIMIT = 20;
 const MEALS_LIMIT = 10;
+const OLLAMA_TIMEOUT_MS = 1_440_000;
 
 const SYSTEM_PROMPT_TEMPLATE = `Tu es MediBot, un assistant médical IA chaleureux et compétent, spécialisé dans l'accompagnement des patients diabétiques.
 
@@ -172,7 +173,7 @@ export class AiChatService {
           ],
           stream: false,
         },
-        { timeout: 900_000, headers: { 'Content-Type': 'application/json' } },
+        { timeout: OLLAMA_TIMEOUT_MS, headers: { 'Content-Type': 'application/json' } },
       );
       // MIGRATED TO GEMMA4
       aiResponse =

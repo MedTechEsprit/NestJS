@@ -19,7 +19,7 @@ const OLLAMA_URL =
 const RECORDS_LIMIT = 500;
 const MEALS_LIMIT = 200;
 const MIN_RECORDS_REQUIRED = 10;
-const OLLAMA_TIMEOUT = 240_000;
+const OLLAMA_TIMEOUT = 1_440_000;
 
 const PATTERN_SYSTEM_PROMPT =
   `You are an expert endocrinologist and data analyst ` +

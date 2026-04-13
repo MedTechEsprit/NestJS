@@ -23,6 +23,7 @@ import {
 } from '../ai-food-analyzer/schemas/ai-food-analysis.schema';
 
 const GLUCOSE_RECORDS_LIMIT = 30;
+const OLLAMA_TIMEOUT_MS = 1_440_000;
 
 const SYSTEM_PROMPT =
   `You are an expert endocrinologist AI specialized in glucose trend prediction ` +
@@ -198,7 +199,7 @@ export class AiPredictionService {
               ],
               stream: false,
             },
-            { timeout: 240_000, headers: { 'Content-Type': 'application/json' } },
+            { timeout: OLLAMA_TIMEOUT_MS, headers: { 'Content-Type': 'application/json' } },
           );
           // MIGRATED TO GEMMA4
           raw =
