@@ -168,4 +168,20 @@ export class MedicationRequestsController {
   markAsPickedUp(@Param('id') id: string) {
     return this.requestsService.markAsPickedUp(id);
   }
+
+  @Put(':id/cancel')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.PATIENT)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Annuler une demande par le patient' })
+  @ApiResponse({ status: 200, description: 'Demande annulée' })
+  @ApiResponse({ status: 404, description: 'Demande non trouvée' })
+  @ApiResponse({ status: 401, description: 'Non autorisé' })
+  @ApiResponse({ status: 403, description: 'Accès interdit' })
+  cancelByPatient(
+    @Param('id') id: string,
+    @CurrentUser('_id') patientId: string,
+  ) {
+    return this.requestsService.cancelByPatient(id, String(patientId));
+  }
 }

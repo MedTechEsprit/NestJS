@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import { Role } from '../../common/enums/role.enum';
 
 export type AppointmentDocument = Appointment & Document;
 
@@ -32,6 +33,15 @@ export class Appointment {
   @Prop({ enum: AppointmentStatus, default: AppointmentStatus.PENDING, index: true })
   status: AppointmentStatus;
 
+  @Prop({ enum: Role, required: true })
+  createdByRole: Role;
+
+  @Prop({ type: Date, default: null })
+  expiresAt?: Date;
+
+  @Prop({ type: Date, default: null })
+  patientConfirmedAt?: Date;
+
   @Prop({ type: String, default: '' })
   notes?: string;
 
@@ -48,3 +58,4 @@ export const AppointmentSchema = SchemaFactory.createForClass(Appointment);
 AppointmentSchema.index({ patientId: 1, dateTime: -1 });
 AppointmentSchema.index({ doctorId: 1, dateTime: -1 });
 AppointmentSchema.index({ status: 1, dateTime: -1 });
+AppointmentSchema.index({ status: 1, createdByRole: 1, expiresAt: 1 });

@@ -4,8 +4,11 @@ import {
   IsEmail,
   IsNotEmpty,
   IsObject,
+  IsNumber,
   IsOptional,
   IsString,
+  Max,
+  Min,
   MinLength,
 } from 'class-validator';
 
@@ -90,4 +93,26 @@ export class CreatePharmacienDto {
   @IsArray()
   @IsString({ each: true })
   listeMedicamentsDisponibles?: string[];
+
+  @ApiPropertyOptional({ example: 36.8065, description: 'Latitude de la pharmacie' })
+  @IsOptional()
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude?: number;
+
+  @ApiPropertyOptional({ example: 10.1815, description: 'Longitude de la pharmacie' })
+  @IsOptional()
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude?: number;
+
+  @ApiPropertyOptional({
+    description: 'Localisation GeoJSON de la pharmacie',
+    example: { type: 'Point', coordinates: [10.1815, 36.8065] },
+  })
+  @IsOptional()
+  @IsObject()
+  location?: { type: 'Point'; coordinates: [number, number] };
 }

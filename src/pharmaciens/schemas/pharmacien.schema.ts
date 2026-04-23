@@ -57,6 +57,14 @@ export class Pharmacien extends User {
     coordinates?: [number, number]; // [longitude, latitude]
   };
 
+  @ApiProperty({ description: 'Latitude (copie pratique de location.coordinates[1])', required: false })
+  @Prop({ type: Number })
+  latitude?: number;
+
+  @ApiProperty({ description: 'Longitude (copie pratique de location.coordinates[0])', required: false })
+  @Prop({ type: Number })
+  longitude?: number;
+
   // Système de points et badges
   @ApiProperty({ description: 'Points accumulés', default: 0 })
   @Prop({ default: 0 })

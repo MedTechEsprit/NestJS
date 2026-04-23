@@ -8,6 +8,7 @@ import { UpdateGlucoseDto } from './dto/update-glucose.dto';
 import { PaginationDto, PaginatedResult } from '../common/dto/pagination.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationSeverity, NotificationType } from '../notifications/schemas/notification.schema';
+import { FirebaseService } from '../firebase/firebase.service';
 
 @Injectable()
 export class GlucoseService {
@@ -15,6 +16,7 @@ export class GlucoseService {
     @InjectModel(Glucose.name) private glucoseModel: Model<GlucoseDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private readonly notificationsService: NotificationsService,
+    private readonly firebaseService: FirebaseService,
   ) {}
 
   private toMgDl(value: number, unit?: string): number {
@@ -128,6 +130,23 @@ export class GlucoseService {
       const valueMgDl = this.toMgDl(createGlucoseDto.value, createGlucoseDto.unit);
       const alert = this.evaluateAlert(valueMgDl);
 
+      // Trigger: notify patient whenever a new glucose measurement is recorded.
+      await this.firebaseService.sendToUser(
+        patientId,
+        'patient',
+        alert.isAbnormal ? 'Alerte glycémie' : 'Nouvelle glycémie enregistrée',
+        alert.isAbnormal
+          ? `${alert.message}`
+          : `Votre glycémie est de ${Math.round(valueMgDl)} mg/dL.`,
+        {
+          measurementId: String((savedGlucose as any)._id),
+          patientId: String(patientId),
+          value: String(createGlucoseDto.value),
+          unit: String(createGlucoseDto.unit || 'mg/dL'),
+          isCritical: String(alert.isAbnormal),
+        },
+      );
+
       if (alert.isAbnormal) {
         const [doctorIds, patient] = await Promise.all([
           this.findAuthorizedDoctorIds(patientId),
@@ -151,6 +170,31 @@ export class GlucoseService {
               ),
             ),
           );
+
+          const gPerL = createGlucoseDto.unit?.toLowerCase() === 'mmol/l'
+            ? createGlucoseDto.value / 5.55
+            : valueMgDl / 100;
+
+          if (gPerL < 0.7 || gPerL > 1.8) {
+            await Promise.all(
+              doctorIds.map((doctorId) =>
+                // Trigger: notify assigned doctors for abnormal patient glycemia (<0.7g/L or >1.8g/L).
+                this.firebaseService.sendToUser(
+                  doctorId,
+                  'doctor',
+                  '⚠️ Alerte glycémie',
+                  `${patientFullName}: ${gPerL.toFixed(2)} g/L`,
+                  {
+                    measurementId: String(savedGlucose._id),
+                    patientId: String(patientId),
+                    doctorId: String(doctorId),
+                    value: String(gPerL.toFixed(2)),
+                    unit: 'g/L',
+                  },
+                ),
+              ),
+            );
+          }
         }
       }
     } catch (error) {

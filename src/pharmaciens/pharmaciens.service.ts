@@ -166,14 +166,51 @@ export class PharmaciensService {
       );
     }
 
+    const updateData: any = { ...updatePharmacienDto };
+
+    // Keep location fields normalized regardless of source (auto-detect or map picker).
+    if (
+      updateData.latitude != null &&
+      updateData.longitude != null &&
+      Number.isFinite(updateData.latitude) &&
+      Number.isFinite(updateData.longitude)
+    ) {
+      updateData.location = {
+        type: 'Point',
+        coordinates: [Number(updateData.longitude), Number(updateData.latitude)],
+      };
+    }
+
+    if (
+      updateData.location &&
+      Array.isArray(updateData.location.coordinates) &&
+      updateData.location.coordinates.length >= 2
+    ) {
+      const lng = Number(updateData.location.coordinates[0]);
+      const lat = Number(updateData.location.coordinates[1]);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        updateData.latitude = lat;
+        updateData.longitude = lng;
+        updateData.location = {
+          type: 'Point',
+          coordinates: [lng, lat],
+        };
+      }
+    }
+
     const updatedPharmacien = await this.pharmacienModel
-      .findByIdAndUpdate(id, updatePharmacienDto, { new: true })
+      .findByIdAndUpdate(id, updateData, { new: true })
       .select('-motDePasse')
       .exec();
 
     if (!updatedPharmacien) {
       throw new NotFoundException('Pharmacien non trouvé');
     }
+
+    // Keep a single canonical location field.
+    await this.pharmacienModel
+      .updateOne({ _id: id }, { $unset: { pharmacyLocation: '' } })
+      .exec();
 
     return updatedPharmacien;
   }
@@ -667,44 +704,45 @@ export class PharmaciensService {
   }
 
   async findNearby(latitude: number, longitude: number, radius: number = 5): Promise<any[]> {
-    const radiusInMeters = radius * 1000;
-
     const pharmacies = await this.pharmacienModel
       .find({
-        location: {
-          $nearSphere: {
-            $geometry: {
-              type: 'Point',
-              coordinates: [longitude, latitude],
-            },
-            $maxDistance: radiusInMeters,
-          },
-        },
         statutCompte: StatutCompte.ACTIF,
         role: Role.PHARMACIEN,
       })
       .select('-motDePasse')
-      .limit(20)
       .lean()
       .exec();
 
-    return pharmacies.map((pharmacy: any) => {
+    const nearby = pharmacies
+      .map((pharmacy: any) => {
+        const coords = this.extractNearbyCoordinates(pharmacy);
+        if (!coords) {
+          return null;
+        }
+
+        const distance = this.haversineKm(
+          latitude,
+          longitude,
+          coords[1],
+          coords[0],
+        );
+
+        if (distance > radius) {
+          return null;
+        }
+
+        return {
+          ...pharmacy,
+          _distanceKm: distance,
+        };
+      })
+      .filter((p): p is any => p != null)
+      .sort((a, b) => a._distanceKm - b._distanceKm)
+      .slice(0, 20);
+
+    return nearby.map((pharmacy: any) => {
       // Calculer la distance
-      let distance = 0;
-      if (pharmacy.location && pharmacy.location.coordinates) {
-        const [pharmLng, pharmLat] = pharmacy.location.coordinates;
-        const R = 6371; // Rayon de la Terre en km
-        const dLat = ((pharmLat - latitude) * Math.PI) / 180;
-        const dLon = ((pharmLng - longitude) * Math.PI) / 180;
-        const a =
-          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-          Math.cos((latitude * Math.PI) / 180) *
-            Math.cos((pharmLat * Math.PI) / 180) *
-            Math.sin(dLon / 2) *
-            Math.sin(dLon / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        distance = R * c;
-      }
+      const distance = Number(pharmacy._distanceKm ?? 0);
 
       return {
         _id: pharmacy._id,
@@ -720,5 +758,56 @@ export class PharmaciensService {
         workingHours: pharmacy.workingHours,
       };
     });
+  }
+
+  private extractNearbyCoordinates(doc: any): [number, number] | undefined {
+    if (
+      doc?.location?.coordinates &&
+      Array.isArray(doc.location.coordinates) &&
+      doc.location.coordinates.length >= 2
+    ) {
+      const lng = Number(doc.location.coordinates[0]);
+      const lat = Number(doc.location.coordinates[1]);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        return [lng, lat];
+      }
+    }
+
+    if (
+      doc?.pharmacyLocation?.coordinates &&
+      Array.isArray(doc.pharmacyLocation.coordinates) &&
+      doc.pharmacyLocation.coordinates.length >= 2
+    ) {
+      const lng = Number(doc.pharmacyLocation.coordinates[0]);
+      const lat = Number(doc.pharmacyLocation.coordinates[1]);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        return [lng, lat];
+      }
+    }
+
+    if (Number.isFinite(doc?.latitude) && Number.isFinite(doc?.longitude)) {
+      return [Number(doc.longitude), Number(doc.latitude)];
+    }
+
+    return undefined;
+  }
+
+  private haversineKm(
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number,
+  ): number {
+    const R = 6371;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
   }
 }

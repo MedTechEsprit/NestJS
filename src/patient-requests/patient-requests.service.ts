@@ -9,12 +9,14 @@ import {
 } from './schemas/patient-request.schema';
 import { CreatePatientRequestDto, DeclineRequestDto } from './dto';
 import { MedecinsService } from '../medecins/medecins.service';
+import { FirebaseService } from '../firebase/firebase.service';
 
 @Injectable()
 export class PatientRequestsService {
   constructor(
     @InjectModel(PatientRequest.name) private patientRequestModel: Model<PatientRequestDocument>,
     private medecinsService: MedecinsService,
+    private readonly firebaseService: FirebaseService,
   ) {}
 
   async create(patientId: string, createDto: CreatePatientRequestDto): Promise<PatientRequest> {
@@ -49,8 +51,23 @@ export class PatientRequestsService {
       requestType,
       requestDate: new Date(),
     });
+    const saved = await request.save();
 
-    return request.save();
+    // Trigger: notify doctor when a patient submits a new follow-up/consultation request.
+    await this.firebaseService.sendToUser(
+      createDto.doctorId,
+      'doctor',
+      'Nouvelle demande patient',
+      'Un patient a envoyé une nouvelle demande de suivi.',
+      {
+        requestId: String((saved as any)._id),
+        patientId: String(patientId),
+        doctorId: String(createDto.doctorId),
+        requestType: String(requestType),
+      },
+    );
+
+    return saved;
   }
 
   async findPendingByDoctor(doctorId: string): Promise<PatientRequest[]> {
@@ -93,6 +110,20 @@ export class PatientRequestsService {
     // This now uses direct collection update to bypass schema strict mode
     await this.medecinsService.addPatient(doctorId, request.patientId.toString());
 
+    // Trigger: notify patient when doctor approves registration/follow-up request.
+    await this.firebaseService.sendToUser(
+      String(request.patientId),
+      'patient',
+      'Demande acceptée',
+      'Votre demande de suivi a été acceptée par le médecin.',
+      {
+        requestId: String(request._id),
+        patientId: String(request.patientId),
+        doctorId: String(request.doctorId),
+        status: String(request.status),
+      },
+    );
+
     return request;
   }
 
@@ -111,7 +142,23 @@ export class PatientRequestsService {
     request.declineReason = declineDto.declineReason;
     request.respondedAt = new Date();
     request.respondedByRole = 'MEDECIN';
-    return request.save();
+    const saved = await request.save();
+
+    // Trigger: notify patient when doctor rejects registration/follow-up request.
+    await this.firebaseService.sendToUser(
+      String(saved.patientId),
+      'patient',
+      'Demande refusée',
+      'Votre demande de suivi a été refusée par le médecin.',
+      {
+        requestId: String(saved._id),
+        patientId: String(saved.patientId),
+        doctorId: String(saved.doctorId),
+        status: String(saved.status),
+      },
+    );
+
+    return saved;
   }
 
   async findByPatient(patientId: string): Promise<PatientRequest[]> {

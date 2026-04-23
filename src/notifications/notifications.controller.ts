@@ -5,12 +5,17 @@ import {
   Param,
   Query,
   UseGuards,
+  Post,
+  Body,
+  Delete,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards';
 import { CurrentUser } from '../common/decorators';
 import { NotificationsService } from './notifications.service';
 import { NotificationType } from './schemas/notification.schema';
+import { RegisterTokenDto, RegisterTokenUserType } from './dto';
 
 @ApiTags('Notifications')
 @ApiBearerAuth()
@@ -18,6 +23,34 @@ import { NotificationType } from './schemas/notification.schema';
 @Controller('notifications')
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
+
+  @Post('register-token')
+  @ApiOperation({ summary: 'Register an FCM token for authenticated user' })
+  registerToken(
+    @Body() body: RegisterTokenDto,
+    @CurrentUser('_id') currentUserId: string,
+    @CurrentUser('role') role: string,
+  ) {
+    this.assertOwnershipAndRole(body.userId, body.userType, String(currentUserId), role);
+    return this.notificationsService.registerToken(body);
+  }
+
+  @Delete('remove-token')
+  @ApiOperation({ summary: 'Remove an FCM token for authenticated user' })
+  removeToken(
+    @Body() body: RegisterTokenDto,
+    @CurrentUser('_id') currentUserId: string,
+    @CurrentUser('role') role: string,
+  ) {
+    this.assertOwnershipAndRole(body.userId, body.userType, String(currentUserId), role);
+    return this.notificationsService.removeToken(body);
+  }
+
+  @Get('my-notifications')
+  @ApiOperation({ summary: 'Get notification history for current user' })
+  myNotifications(@CurrentUser('_id') userId: string) {
+    return this.notificationsService.getMyNotifications(String(userId));
+  }
 
   @Get()
   @ApiOperation({ summary: 'Get user notifications with optional filters' })
@@ -55,5 +88,26 @@ export class NotificationsController {
   async getUnreadCount(@CurrentUser('_id') userId: string) {
     const count = await this.notificationsService.getUnreadCount(userId);
     return { count };
+  }
+
+  private assertOwnershipAndRole(
+    userId: string,
+    userType: RegisterTokenUserType,
+    currentUserId: string,
+    role: string,
+  ): void {
+    if (String(userId) !== String(currentUserId)) {
+      throw new ForbiddenException('Vous ne pouvez gérer que vos propres tokens');
+    }
+
+    const normalizedRole = String(role || '').toUpperCase();
+    const valid =
+      (userType === RegisterTokenUserType.PATIENT && normalizedRole === 'PATIENT') ||
+      (userType === RegisterTokenUserType.DOCTOR && normalizedRole === 'MEDECIN') ||
+      (userType === RegisterTokenUserType.PHARMACY && normalizedRole === 'PHARMACIEN');
+
+    if (!valid) {
+      throw new ForbiddenException('Type utilisateur invalide pour ce compte');
+    }
   }
 }

@@ -2,8 +2,12 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsDate,
   IsEnum,
+  IsNumber,
+  IsObject,
   IsOptional,
   IsString,
+  Max,
+  Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { BaseRegisterUserDto } from './base-register-user.dto';
@@ -32,5 +36,27 @@ export class RegisterPatientDto extends BaseRegisterUserDto {
   @IsOptional()
   @IsString()
   groupeSanguin?: string;
+
+  @ApiPropertyOptional({ description: 'Latitude du patient', example: 36.8065 })
+  @IsOptional()
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude?: number;
+
+  @ApiPropertyOptional({ description: 'Longitude du patient', example: 10.1815 })
+  @IsOptional()
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude?: number;
+
+  @ApiPropertyOptional({
+    description: 'Localisation GeoJSON du patient',
+    example: { type: 'Point', coordinates: [10.1815, 36.8065] },
+  })
+  @IsOptional()
+  @IsObject()
+  location?: { type: 'Point'; coordinates: [number, number] };
 }
 

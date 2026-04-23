@@ -4,8 +4,12 @@ import {
   IsEmail,
   IsEnum,
   IsNotEmpty,
+  IsNumber,
+  IsObject,
   IsOptional,
   IsString,
+  Max,
+  Min,
   MinLength,
   ValidateNested,
 } from 'class-validator';
@@ -68,6 +72,28 @@ export class CreatePatientDto {
   @IsOptional()
   @IsString()
   groupeSanguin?: string;
+
+  @ApiPropertyOptional({ description: 'Latitude du patient', example: 36.8065 })
+  @IsOptional()
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude?: number;
+
+  @ApiPropertyOptional({ description: 'Longitude du patient', example: 10.1815 })
+  @IsOptional()
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude?: number;
+
+  @ApiPropertyOptional({
+    description: 'Localisation GeoJSON du patient',
+    example: { type: 'Point', coordinates: [10.1815, 36.8065] },
+  })
+  @IsOptional()
+  @IsObject()
+  location?: { type: 'Point'; coordinates: [number, number] };
 
   // ── Sous-document profil médical ───────────────────────────────
   @ApiPropertyOptional({ description: 'Profil médical détaillé', type: ProfilMedicalDto })

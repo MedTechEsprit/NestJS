@@ -4,6 +4,7 @@ import { Model, Types, Connection } from 'mongoose';
 import { Order, OrderDocument } from './schemas/order.schema';
 import { Product, ProductDocument } from '../products/schemas/product.schema';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { FirebaseService } from '../firebase/firebase.service';
 
 // ── Points Constants ──────────────────────────────────────────────
 const POINTS = {
@@ -32,6 +33,7 @@ export class OrdersService {
     @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
     @InjectModel(Product.name) private productModel: Model<ProductDocument>,
     @InjectConnection() private connection: Connection,
+    private readonly firebaseService: FirebaseService,
   ) {}
 
   async create(patientId: string, dto: CreateOrderDto): Promise<Order> {
@@ -71,7 +73,22 @@ export class OrdersService {
       totalPrice,
       patientNote: dto.patientNote || '',
     });
-    return order.save();
+    const saved = await order.save();
+
+    // Trigger: notify pharmacy when patient sends a new medication order.
+    await this.firebaseService.sendToUser(
+      dto.pharmacistId,
+      'pharmacy',
+      'Nouvelle ordonnance',
+      'Un patient a passé une nouvelle commande.',
+      {
+        orderId: String((saved as any)._id),
+        patientId: String(patientId),
+        pharmacyId: String(dto.pharmacistId),
+      },
+    );
+
+    return saved;
   }
 
   async findByPatient(patientId: string): Promise<Order[]> {
@@ -150,6 +167,20 @@ export class OrdersService {
       await this._awardPoints(pharmacistId, pointsEarned, order.totalPrice, newStatus === 'picked_up');
     }
 
+    // Trigger: notify patient when pharmacy updates order status.
+    await this.firebaseService.sendToUser(
+      String(order.patientId),
+      'patient',
+      'Mise à jour commande',
+      `Votre commande est maintenant: ${newStatus}`,
+      {
+        orderId: String(order._id),
+        patientId: String(order.patientId),
+        pharmacyId: String(order.pharmacistId),
+        status: String(newStatus),
+      },
+    );
+
     return order.save();
   }
 
@@ -169,6 +200,21 @@ export class OrdersService {
       });
     }
     order.status = 'cancelled';
+
+    // Trigger: notify pharmacy when patient cancels an order.
+    await this.firebaseService.sendToUser(
+      String(order.pharmacistId),
+      'pharmacy',
+      'Commande annulée',
+      'Le patient a annulé une commande.',
+      {
+        orderId: String(order._id),
+        patientId: String(order.patientId),
+        pharmacyId: String(order.pharmacistId),
+        status: 'cancelled',
+      },
+    );
+
     return order.save();
   }
 

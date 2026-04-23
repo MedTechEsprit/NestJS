@@ -1,6 +1,6 @@
 import { ApiPropertyOptional, PartialType, OmitType, ApiProperty } from '@nestjs/swagger';
 import { CreatePharmacienDto } from './create-pharmacien.dto';
-import { IsOptional, IsString, IsObject, IsBoolean, IsNumber } from 'class-validator';
+import { IsOptional, IsString, IsObject, IsBoolean, IsNumber, Min, Max } from 'class-validator';
 
 export class UpdatePharmacienDto extends PartialType(
   OmitType(CreatePharmacienDto, ['email', 'motDePasse', 'numeroOrdre'] as const),
@@ -44,5 +44,30 @@ export class UpdatePharmacienDto extends PartialType(
   @IsOptional()
   @IsString()
   profileImage?: string;
+
+  @ApiPropertyOptional({ description: 'Latitude de la pharmacie', example: 36.8065 })
+  @IsOptional()
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude?: number;
+
+  @ApiPropertyOptional({ description: 'Longitude de la pharmacie', example: 10.1815 })
+  @IsOptional()
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude?: number;
+
+  @ApiPropertyOptional({
+    description: 'Localisation GeoJSON de la pharmacie',
+    example: { type: 'Point', coordinates: [10.1815, 36.8065] },
+  })
+  @IsOptional()
+  @IsObject()
+  location?: {
+    type: 'Point';
+    coordinates: [number, number];
+  };
 }
 
