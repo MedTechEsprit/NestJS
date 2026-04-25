@@ -37,14 +37,29 @@ export class MedecinBoostSubscription {
   @Prop()
   lastPaymentAt?: Date;
 
-  @Prop()
-  stripeCustomerId?: string;
+  @Prop({ default: 'revenuecat' })
+  billingProvider: string;
+
+  @Prop({ index: true })
+  revenueCatAppUserId?: string;
+
+  @Prop({ index: true })
+  revenueCatOriginalAppUserId?: string;
 
   @Prop()
-  stripePaymentIntentId?: string;
+  revenueCatEntitlementId?: string;
 
   @Prop()
-  latestCheckoutSessionId?: string;
+  revenueCatProductId?: string;
+
+  @Prop()
+  latestVerificationId?: string;
+
+  @Prop()
+  lastRevenueCatEventTimestampMs?: number;
+
+  @Prop()
+  lastSyncedAt?: Date;
 }
 
 export const MedecinBoostSubscriptionSchema = SchemaFactory.createForClass(
@@ -52,3 +67,4 @@ export const MedecinBoostSubscriptionSchema = SchemaFactory.createForClass(
 );
 
 MedecinBoostSubscriptionSchema.index({ medecinId: 1, isActive: 1 });
+MedecinBoostSubscriptionSchema.index({ revenueCatAppUserId: 1 });
