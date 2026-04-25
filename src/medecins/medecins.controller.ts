@@ -10,11 +10,7 @@ import {
   Query,
   Post,
   Req,
-  Headers,
-  HttpCode,
-  HttpStatus,
 } from '@nestjs/common';
-import { Request } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -25,13 +21,11 @@ import {
 import { MedecinsService } from './medecins.service';
 import { UpdateMedecinDto } from './dto/update-medecin.dto';
 import { ActivateMedecinBoostDto } from './dto/activate-medecin-boost.dto';
-import { CreateMedecinBoostCheckoutDto } from './dto/create-medecin-boost-checkout.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/enums/role.enum';
 import { PaginationDto } from '../common/dto/pagination.dto';
-import { Public } from '../common/decorators/public.decorator';
 
 @ApiTags('Médecins')
 @Controller('medecins')
@@ -75,57 +69,20 @@ export class MedecinsController {
     return this.medecinsService.getBoostStatus(req.user._id.toString());
   }
 
-  @Post('boost/checkout-session')
+  @Get('boost/catalog/:boostType')
   @Roles(Role.MEDECIN)
-  @ApiOperation({ summary: 'Créer une session Stripe Checkout pour boost médecin' })
-  @ApiResponse({ status: 201, description: 'Session Stripe créée' })
-  createBoostCheckoutSession(
-    @Req() req: any,
-    @Body() body: CreateMedecinBoostCheckoutDto,
-  ) {
-    return this.medecinsService.createBoostCheckoutSession(
-      req.user._id.toString(),
-      body.boostType,
-      body.successUrl,
-      body.cancelUrl,
-    );
+  @ApiOperation({ summary: 'Obtenir les infos produit RevenueCat pour un boost' })
+  @ApiResponse({ status: 200, description: 'Catalogue boost RevenueCat' })
+  getBoostCatalog(@Param('boostType') boostType: string) {
+    return this.medecinsService.getBoostCatalogInfo(boostType as any);
   }
 
-  @Post('boost/verify-session')
+  @Post('boost/sync')
   @Roles(Role.MEDECIN)
-  @ApiOperation({ summary: 'Vérifier une session Stripe boost médecin' })
-  @ApiResponse({ status: 200, description: 'Session vérifiée' })
-  verifyBoostSession(@Req() req: any, @Body('sessionId') sessionId: string) {
-    if (!sessionId) {
-      throw new BadRequestException('sessionId requis');
-    }
-
-    return this.medecinsService.verifyBoostCheckoutSession(
-      req.user._id.toString(),
-      sessionId,
-    );
-  }
-
-  @Post('boost/verify-latest')
-  @Roles(Role.MEDECIN)
-  @ApiOperation({ summary: 'Vérifier la dernière session Stripe boost médecin' })
-  @ApiResponse({ status: 200, description: 'Dernière session vérifiée' })
-  verifyLatestBoost(@Req() req: any) {
-    return this.medecinsService.verifyLatestBoostCheckoutSession(
-      req.user._id.toString(),
-    );
-  }
-
-  @Post('boost/webhook')
-  @Public()
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Webhook Stripe pour boost médecin' })
-  @ApiResponse({ status: 200, description: 'Webhook traité' })
-  stripeBoostWebhook(
-    @Req() req: Request & { rawBody?: Buffer },
-    @Headers('stripe-signature') signature: string,
-  ) {
-    return this.medecinsService.handleBoostWebhook(req.rawBody as Buffer, signature);
+  @ApiOperation({ summary: 'Synchroniser le statut boost depuis RevenueCat' })
+  @ApiResponse({ status: 200, description: 'Statut boost synchronisé' })
+  syncBoostStatus(@Req() req: any) {
+    return this.medecinsService.syncBoostStatus(req.user._id.toString());
   }
 
   @Get(':id')
@@ -234,16 +191,12 @@ export class MedecinsController {
     return this.medecinsService.getBoostStatus(id);
   }
 
-  @Post(':id/boost/activate')
+  @Post(':id/boost/sync')
   @Roles(Role.MEDECIN)
-  @ApiOperation({ summary: 'Créer un checkout Stripe pour activer le boost médecin' })
-  @ApiResponse({ status: 201, description: 'Checkout Stripe boost créé' })
-  @ApiResponse({ status: 400, description: 'Plan invalide' })
+  @ApiOperation({ summary: 'Synchroniser le statut boost depuis RevenueCat' })
+  @ApiResponse({ status: 200, description: 'Statut boost synchronisé' })
   @ApiResponse({ status: 404, description: 'Médecin non trouvé' })
-  activateBoost(
-    @Param('id') id: string,
-    @Body() body: ActivateMedecinBoostDto,
-  ) {
-    return this.medecinsService.createBoostCheckoutSession(id, body.boostType);
+  syncBoost(@Param('id') id: string) {
+    return this.medecinsService.syncBoostStatus(id);
   }
 }

@@ -23,6 +23,7 @@ import {
   AiPrediction,
   AiPredictionDocument,
 } from '../ai-prediction/schemas/ai-prediction.schema';
+import { FirebaseService } from '../firebase/firebase.service';
 
 // MIGRATED TO GEMMA4
 const OLLAMA_URL =
@@ -89,6 +90,7 @@ export class AiDoctorService {
     private readonly nutritionService: NutritionService,
     private readonly medecinsService: MedecinsService,
     private readonly patientsService: PatientsService,
+    private readonly firebaseService: FirebaseService,
   ) {}
 
   // ── Private: get doctor raw data directly from discriminator model ─────────
@@ -390,6 +392,21 @@ export class AiDoctorService {
       .catch((err: unknown) =>
         this.logger.warn(`AiDoctorChat urgent persist failed: ${err}`),
       );
+
+    if (urgentPatients.length > 0) {
+      // Trigger: notify doctor when dashboard detects critical patient health status changes.
+      await this.firebaseService.sendToUser(
+        doctorId,
+        'doctor',
+        'Alerte tableau de bord',
+        `${urgentPatients.length} patient(s) nécessitent une attention immédiate.`,
+        {
+          doctorId: String(doctorId),
+          urgentCount: String(urgentPatients.length),
+          trigger: 'urgent_check',
+        },
+      );
+    }
 
     return {
       urgentPatients,

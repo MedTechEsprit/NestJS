@@ -21,6 +21,7 @@ import {
   AiFoodAnalysis,
   AiFoodAnalysisDocument,
 } from '../ai-food-analyzer/schemas/ai-food-analysis.schema';
+import { FirebaseService } from '../firebase/firebase.service';
 
 const GLUCOSE_RECORDS_LIMIT = 30;
 const OLLAMA_TIMEOUT_MS = 1_440_000;
@@ -56,6 +57,7 @@ export class AiPredictionService {
     private readonly glucoseService: GlucoseService,
     private readonly nutritionService: NutritionService,
     private readonly configService: ConfigService,
+    private readonly firebaseService: FirebaseService,
   ) {}
 
   // ── 1. Main prediction method ───────────────────────────────────────────────
@@ -278,6 +280,19 @@ export class AiPredictionService {
       prediction: parsedPrediction,
       isFallback,
     });
+
+    // Trigger: notify patient when AI analysis/prediction report is ready.
+    await this.firebaseService.sendToUser(
+      patientId,
+      'patient',
+      'Rapport IA prêt',
+      'Votre nouvelle analyse IA glycémique est disponible.',
+      {
+        predictionId: String(saved._id),
+        patientId: String(patientId),
+        triggerType: String(saved.triggerType),
+      },
+    );
 
     // Step 7 — Return
     return {

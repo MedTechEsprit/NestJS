@@ -8,12 +8,14 @@ import {
   MedecinBoostSubscription,
   MedecinBoostSubscriptionSchema,
 } from './schemas/medecin-boost-subscription.schema';
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
 
 @Module({
   imports: [
     // Import AuthModule to access Medecin discriminator model
     AuthModule,
     GlucoseModule,
+    SubscriptionsModule,
     MongooseModule.forFeature([
       {
         name: MedecinBoostSubscription.name,

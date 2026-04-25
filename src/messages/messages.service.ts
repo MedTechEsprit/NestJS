@@ -4,12 +4,16 @@ import { Model, Types } from 'mongoose';
 import { Message, MessageDocument } from './schemas/message.schema';
 import { CreateMessageDto } from './dto';
 import { ConversationsService } from '../conversations/conversations.service';
+import { User, UserDocument } from '../users/schemas/user.schema';
+import { FirebaseService, FirebaseUserType } from '../firebase/firebase.service';
 
 @Injectable()
 export class MessagesService {
   constructor(
     @InjectModel(Message.name) private messageModel: Model<MessageDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
     private conversationsService: ConversationsService,
+    private readonly firebaseService: FirebaseService,
   ) {}
 
   async create(conversationId: string, createMessageDto: CreateMessageDto): Promise<Message> {
@@ -31,6 +35,50 @@ export class MessagesService {
       conversationId,
       createMessageDto.content.substring(0, 100),
     );
+
+    const [sender, receiver] = await Promise.all([
+      this.userModel
+        .findById(createMessageDto.senderId)
+        .select('nom prenom role')
+        .lean(),
+      this.userModel
+        .findById(createMessageDto.receiverId)
+        .select('role')
+        .lean(),
+    ]);
+
+    const senderFullName = `${sender?.prenom || ''} ${sender?.nom || ''}`.trim() || 'Utilisateur';
+    const receiverUserType = this.roleToUserType((receiver as any)?.role);
+    const senderRole = String((sender as any)?.role || '').toUpperCase();
+
+    if (receiverUserType) {
+      let title = 'Nouveau message';
+      if (receiverUserType === 'doctor' && senderRole === 'PATIENT') {
+        title = 'Nouveau message patient';
+      } else if (receiverUserType === 'patient' && senderRole === 'MEDECIN') {
+        title = 'Nouveau message';
+      } else if (receiverUserType === 'doctor' && senderRole === 'PHARMACIEN') {
+        title = 'Nouveau message pharmacie';
+      } else if (receiverUserType === 'pharmacy' && senderRole === 'PATIENT') {
+        title = 'Nouveau message patient';
+      } else if (receiverUserType === 'pharmacy' && senderRole === 'MEDECIN') {
+        title = 'Nouvelle ordonnance';
+      }
+
+      // Trigger: notify the message receiver (patient/doctor/pharmacy) when a new message is sent.
+      await this.firebaseService.sendToUser(
+        createMessageDto.receiverId,
+        receiverUserType,
+        title,
+        `${senderFullName} vous a envoyé un message`,
+        {
+          conversationId: String(conversationId),
+          messageId: String((savedMessage as any)._id),
+          senderId: String(createMessageDto.senderId),
+          receiverId: String(createMessageDto.receiverId),
+        },
+      );
+    }
 
     return savedMessage;
   }
@@ -69,5 +117,13 @@ export class MessagesService {
       },
       { isRead: true },
     );
+  }
+
+  private roleToUserType(role?: string): FirebaseUserType | null {
+    const normalized = String(role || '').toUpperCase();
+    if (normalized === 'PATIENT') return 'patient';
+    if (normalized === 'MEDECIN') return 'doctor';
+    if (normalized === 'PHARMACIEN') return 'pharmacy';
+    return null;
   }
 }

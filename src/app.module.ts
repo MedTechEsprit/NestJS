@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
+import { resolve } from 'path';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -33,14 +35,29 @@ import { OrdersModule } from './orders/orders.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { ComplaintsModule } from './complaints/complaints.module';
 import { AdminModule } from './admin/admin.module';
+import { FirebaseModule } from './firebase/firebase.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      envFilePath: [
+        resolve(process.cwd(), '.env'),
+        resolve(__dirname, '..', '.env'),
+      ],
     }),
-    MongooseModule.forRoot(process.env.MONGODB_URI as string),
+    FirebaseModule,
+    MongooseModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => {
+        const uri =
+          configService.get<string>('MONGODB_URI') ?? process.env.MONGODB_URI;
+        if (!uri) {
+          throw new Error('Missing MONGODB_URI in environment variables.');
+        }
+        return { uri };
+      },
+    }),
     ScheduleModule.forRoot(),
 
     AuthModule,

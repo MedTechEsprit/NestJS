@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  HttpCode,
   Body,
   Patch,
   Param,
@@ -21,6 +22,7 @@ import { CreateAppointmentDto, UpdateAppointmentDto } from './dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Role } from '../common/enums/role.enum';
 import { PaginationDto } from '../common/dto/pagination.dto';
 import { AppointmentStatus } from './schemas/appointment.schema';
@@ -38,8 +40,16 @@ export class AppointmentsController {
   @ApiResponse({ status: 201, description: 'Appointment created successfully' })
   @ApiResponse({ status: 400, description: 'Invalid appointment data' })
   @ApiResponse({ status: 403, description: 'Access denied' })
-  create(@Body() createAppointmentDto: CreateAppointmentDto) {
-    return this.appointmentsService.create(createAppointmentDto);
+  create(
+    @Body() createAppointmentDto: CreateAppointmentDto,
+    @CurrentUser('_id') requesterId: string,
+    @CurrentUser('role') requesterRole: string,
+  ) {
+    return this.appointmentsService.create(
+      createAppointmentDto,
+      requesterId,
+      requesterRole,
+    );
   }
 
   @Get('doctor/:doctorId/upcoming')
@@ -129,8 +139,32 @@ export class AppointmentsController {
   @ApiResponse({ status: 400, description: 'Invalid data or conflicting appointment time' })
   @ApiResponse({ status: 404, description: 'Appointment not found' })
   @ApiResponse({ status: 403, description: 'Access denied' })
-  update(@Param('id') id: string, @Body() updateAppointmentDto: UpdateAppointmentDto) {
-    return this.appointmentsService.update(id, updateAppointmentDto);
+  update(
+    @Param('id') id: string,
+    @Body() updateAppointmentDto: UpdateAppointmentDto,
+    @CurrentUser('_id') requesterId: string,
+    @CurrentUser('role') requesterRole: string,
+  ) {
+    return this.appointmentsService.update(
+      id,
+      updateAppointmentDto,
+      requesterId,
+      requesterRole,
+    );
+  }
+
+  @Post(':id/patient-confirm')
+  @HttpCode(200)
+  @Roles(Role.PATIENT)
+  @ApiOperation({ summary: 'Patient confirms a doctor-created appointment' })
+  @ApiResponse({ status: 200, description: 'Appointment confirmed by patient' })
+  @ApiResponse({ status: 400, description: 'Appointment cannot be confirmed' })
+  @ApiResponse({ status: 404, description: 'Appointment not found' })
+  confirmByPatient(
+    @Param('id') id: string,
+    @CurrentUser('_id') patientId: string,
+  ) {
+    return this.appointmentsService.confirmByPatient(id, patientId);
   }
 
   @Delete(':id')

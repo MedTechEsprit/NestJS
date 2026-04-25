@@ -3,11 +3,14 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Notification, NotificationDocument, NotificationType, NotificationSeverity } from './schemas/notification.schema';
 import { CreateNotificationDto } from './dto';
+import { User, UserDocument } from '../users/schemas/user.schema';
+import { RegisterTokenDto, RegisterTokenUserType } from './dto/register-token.dto';
 
 @Injectable()
 export class NotificationsService {
   constructor(
     @InjectModel(Notification.name) private notificationModel: Model<NotificationDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
 
   /**
@@ -25,7 +28,9 @@ export class NotificationsService {
       userId: new Types.ObjectId(userId),
       type,
       title,
+      body: message,
       message,
+      data: relatedId ? { relatedId: String(relatedId) } : {},
       relatedId: relatedId ? new Types.ObjectId(relatedId) : undefined,
       severity,
       timestamp: new Date(),
@@ -38,6 +43,7 @@ export class NotificationsService {
       userId: new Types.ObjectId(createDto.userId),
       type: createDto.type,
       title: createDto.title,
+      body: createDto.message,
       message: createDto.message,
       relatedId: createDto.relatedId ? new Types.ObjectId(createDto.relatedId) : undefined,
       severity: createDto.severity || NotificationSeverity.INFO,
@@ -101,5 +107,34 @@ export class NotificationsService {
       userId: new Types.ObjectId(userId),
       isRead: false,
     });
+  }
+
+  async registerToken(dto: RegisterTokenDto): Promise<{ success: boolean }> {
+    await this.userModel.updateOne(
+      { _id: new Types.ObjectId(dto.userId), role: this.userTypeToRole(dto.userType) },
+      { $addToSet: { fcmTokens: dto.fcmToken } },
+    );
+    return { success: true };
+  }
+
+  async removeToken(dto: RegisterTokenDto): Promise<{ success: boolean }> {
+    await this.userModel.updateOne(
+      { _id: new Types.ObjectId(dto.userId), role: this.userTypeToRole(dto.userType) },
+      { $pull: { fcmTokens: dto.fcmToken } },
+    );
+    return { success: true };
+  }
+
+  async getMyNotifications(userId: string): Promise<Notification[]> {
+    return this.notificationModel
+      .find({ userId: new Types.ObjectId(userId) })
+      .sort({ createdAt: -1, timestamp: -1 })
+      .lean();
+  }
+
+  private userTypeToRole(userType: RegisterTokenUserType): string {
+    if (userType === RegisterTokenUserType.PATIENT) return 'PATIENT';
+    if (userType === RegisterTokenUserType.DOCTOR) return 'MEDECIN';
+    return 'PHARMACIEN';
   }
 }

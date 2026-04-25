@@ -35,6 +35,10 @@ export class User {
   @Prop()
   photoProfil: string;
 
+  @ApiProperty({ description: 'Liste des tokens FCM de l\'utilisateur', type: [String] })
+  @Prop({ type: [String], default: [] })
+  fcmTokens: string[];
+
   // Note: role field is managed automatically by Mongoose discriminatorKey
   // It's defined here for TypeScript typing but not as a @Prop
   @ApiProperty({ enum: Role, description: 'Rôle de l\'utilisateur' })

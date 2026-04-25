@@ -16,10 +16,24 @@ export enum NotificationSeverity {
   CRITICAL = 'critical',
 }
 
+export enum NotificationUserType {
+  PATIENT = 'patient',
+  DOCTOR = 'doctor',
+  PHARMACY = 'pharmacy',
+}
+
 @Schema({ timestamps: true })
 export class Notification {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   userId: Types.ObjectId;
+
+  @Prop({
+    type: String,
+    enum: NotificationUserType,
+    required: false,
+    index: true,
+  })
+  userType?: NotificationUserType;
 
   @Prop({ 
     type: String, 
@@ -33,6 +47,12 @@ export class Notification {
 
   @Prop({ type: String, required: true })
   message: string;
+
+  @Prop({ type: String, required: false })
+  body?: string;
+
+  @Prop({ type: Object, default: {} })
+  data?: Record<string, any>;
 
   @Prop({ type: Date, default: Date.now, index: true })
   timestamp: Date;

@@ -35,16 +35,32 @@ export class PatientSubscription {
   @Prop()
   lastPaymentAt?: Date;
 
-  @Prop()
-  stripeCustomerId?: string;
+  @Prop({ default: 'revenuecat' })
+  billingProvider: string;
+
+  @Prop({ index: true })
+  revenueCatAppUserId?: string;
+
+  @Prop({ index: true })
+  revenueCatOriginalAppUserId?: string;
 
   @Prop()
-  stripeSubscriptionId?: string;
+  revenueCatEntitlementId?: string;
 
   @Prop()
-  latestCheckoutSessionId?: string;
+  revenueCatProductId?: string;
+
+  @Prop()
+  latestVerificationId?: string;
+
+  @Prop()
+  lastRevenueCatEventTimestampMs?: number;
+
+  @Prop()
+  lastSyncedAt?: Date;
 }
 
 export const PatientSubscriptionSchema = SchemaFactory.createForClass(PatientSubscription);
 
 PatientSubscriptionSchema.index({ patientId: 1, isActive: 1 });
+PatientSubscriptionSchema.index({ revenueCatAppUserId: 1 });

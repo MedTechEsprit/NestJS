@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsDateString, IsEnum, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { IsDateString, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { AppointmentType } from '../schemas/appointment.schema';
 
 export class CreateAppointmentDto {
@@ -27,6 +27,7 @@ export class CreateAppointmentDto {
   type: AppointmentType;
 
   @ApiProperty({ description: 'Notes (optional)', example: 'Routine checkup' })
-  @IsNotEmpty()
+  @IsOptional()
+  @IsString({ message: 'Notes must be a string' })
   notes?: string;
 }

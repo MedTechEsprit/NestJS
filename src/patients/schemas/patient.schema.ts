@@ -30,6 +30,29 @@ export class Patient extends User {
   @Prop()
   groupeSanguin: string;
 
+  @ApiProperty({ description: 'Localisation du patient (GeoJSON Point)', required: false })
+  @Prop({
+    type: {
+      type: String,
+      enum: ['Point'],
+    },
+    coordinates: {
+      type: [Number],
+    },
+  })
+  location?: {
+    type: string;
+    coordinates?: [number, number];
+  };
+
+  @ApiProperty({ description: 'Latitude du patient', required: false })
+  @Prop({ type: Number })
+  latitude?: number;
+
+  @ApiProperty({ description: 'Longitude du patient', required: false })
+  @Prop({ type: Number })
+  longitude?: number;
+
   // ── Sous-document profil médical complet ───────────────────────
   @ApiProperty({ description: 'Profil médical détaillé', type: ProfilMedical })
   @Prop({ type: ProfilMedicalSchema, default: {} })
@@ -37,3 +60,4 @@ export class Patient extends User {
 }
 
 export const PatientSchema = SchemaFactory.createForClass(Patient);
+PatientSchema.index({ location: '2dsphere' }, { sparse: true });

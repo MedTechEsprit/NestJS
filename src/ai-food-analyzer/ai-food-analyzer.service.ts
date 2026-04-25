@@ -20,6 +20,7 @@ import {
   AiFoodAnalysisDocument,
   DetailedAdvice,
 } from './schemas/ai-food-analysis.schema';
+import { FirebaseService } from '../firebase/firebase.service';
 
 /** Subset of patient data used to personalise the AI prompt */
 interface PatientContext {
@@ -213,6 +214,7 @@ export class AiFoodAnalyzerService {
     private readonly patientsService: PatientsService,
     private readonly aiPredictionService: AiPredictionService,
     private readonly configService: ConfigService,
+    private readonly firebaseService: FirebaseService,
   ) {}
 
   async analyzeAndSave(
@@ -332,6 +334,19 @@ export class AiFoodAnalyzerService {
       .catch((err: unknown) =>
         this.logger.warn(`Auto-prediction failed for meal ${String(mealId)}: ${err}`),
       );
+
+    // Trigger: notify patient when AI meal analysis is completed.
+    await this.firebaseService.sendToUser(
+      patientId,
+      'patient',
+      'Analyse nutritionnelle prête',
+      'Votre rapport IA de repas est disponible.',
+      {
+        mealId: String(mealId),
+        aiAnalysisId: String(aiAnalysisId || ''),
+        patientId: String(patientId),
+      },
+    );
 
     return {
       meal: {

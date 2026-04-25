@@ -60,6 +60,22 @@ export class PharmacyResponse {
   @ApiProperty({ description: 'Détail du calcul des points' })
   @Prop({ type: Object })
   pointsBreakdown?: PointsBreakdown;
+
+  @ApiProperty({ description: 'Distance patient-pharmacie en km' })
+  @Prop({ type: Number })
+  distanceKm?: number;
+
+  @ApiProperty({ description: 'Nom de la pharmacie (snapshot)' })
+  @Prop({ type: String })
+  pharmacyName?: string;
+
+  @ApiProperty({ description: 'Adresse de la pharmacie (snapshot)' })
+  @Prop({ type: String })
+  pharmacyAddress?: string;
+
+  @ApiProperty({ description: 'Coordonnées de la pharmacie [lng, lat] (snapshot)' })
+  @Prop({ type: [Number] })
+  pharmacyCoordinates?: [number, number];
 }
 
 export const PointsBreakdownSchema = SchemaFactory.createForClass(PointsBreakdown);
@@ -74,6 +90,10 @@ export class MedicationRequest {
   @ApiProperty({ description: 'Nom du médicament', example: 'Insuline Rapide' })
   @Prop({ required: true })
   medicationName: string;
+
+  @ApiProperty({ description: 'ID du médicament (optionnel)' })
+  @Prop({ type: String })
+  medicationId?: string;
 
   @ApiProperty({ description: 'Dosage', example: '100 UI/ml' })
   @Prop({ required: true })
@@ -118,6 +138,25 @@ export class MedicationRequest {
   @ApiProperty({ description: 'Date d\'expiration de la demande' })
   @Prop({ required: true })
   expiresAt: Date;
+
+  @ApiProperty({ description: 'Localisation du patient (GeoJSON Point)' })
+  @Prop({
+    type: {
+      type: String,
+      enum: ['Point'],
+    },
+    coordinates: {
+      type: [Number],
+    },
+  })
+  patientLocation?: {
+    type: string;
+    coordinates: [number, number];
+  };
+
+  @ApiProperty({ description: 'Rayon utilisé (km) pour sélectionner les pharmacies proches' })
+  @Prop({ type: Number })
+  requestRadiusKm?: number;
 }
 
 export const MedicationRequestSchema = SchemaFactory.createForClass(MedicationRequest);
@@ -127,3 +166,4 @@ MedicationRequestSchema.index({ 'pharmacyResponses.pharmacyId': 1 });
 MedicationRequestSchema.index({ expiresAt: 1 });
 MedicationRequestSchema.index({ globalStatus: 1 });
 MedicationRequestSchema.index({ createdAt: -1 });
+MedicationRequestSchema.index({ patientLocation: '2dsphere' }, { sparse: true });

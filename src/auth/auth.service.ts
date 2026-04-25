@@ -73,6 +73,11 @@ export class AuthService {
     // Create patient with discriminator (role is auto-set by discriminator)
     const newPatient = new this.patientModel({
       ...patientData,
+      ...this.normalizeCoordinates(
+        registerDto.latitude,
+        registerDto.longitude,
+        registerDto.location,
+      ),
       email: email.toLowerCase(),
       motDePasse: hashedPassword,
       statutCompte: StatutCompte.ACTIF,
@@ -152,6 +157,11 @@ export class AuthService {
     const newPharmacien = new this.pharmacienModel({
       ...pharmacienData,
       numeroOrdre,
+      ...this.normalizeCoordinates(
+        registerDto.latitude,
+        registerDto.longitude,
+        registerDto.location,
+      ),
       email: email.toLowerCase(),
       motDePasse: hashedPassword,
       statutCompte: StatutCompte.ACTIF,
@@ -161,6 +171,11 @@ export class AuthService {
     });
 
     const savedPharmacien = await newPharmacien.save();
+
+    // Keep only canonical location fields on pharmacy documents.
+    await this.pharmacienModel
+      .updateOne({ _id: savedPharmacien._id }, { $unset: { pharmacyLocation: '' } })
+      .exec();
 
     // Generate JWT and create session
     return this.generateAuthResponse(savedPharmacien, deviceInfo, ipAddress, userAgent);
@@ -301,6 +316,43 @@ export class AuthService {
     } catch {
       throw new UnauthorizedException('Token Google invalide');
     }
+  }
+
+  private normalizeCoordinates(
+    latitude?: number,
+    longitude?: number,
+    location?: { type: 'Point'; coordinates: [number, number] },
+  ) {
+    let resolvedLatitude = latitude;
+    let resolvedLongitude = longitude;
+    let resolvedLocation = location;
+
+    if (
+      (!resolvedLocation || !Array.isArray(resolvedLocation.coordinates)) &&
+      resolvedLatitude != null &&
+      resolvedLongitude != null
+    ) {
+      resolvedLocation = {
+        type: 'Point',
+        coordinates: [resolvedLongitude, resolvedLatitude],
+      };
+    }
+
+    if (
+      resolvedLocation &&
+      Array.isArray(resolvedLocation.coordinates) &&
+      resolvedLocation.coordinates.length >= 2
+    ) {
+      const [lng, lat] = resolvedLocation.coordinates;
+      if (typeof lat === 'number') resolvedLatitude = lat;
+      if (typeof lng === 'number') resolvedLongitude = lng;
+    }
+
+    return {
+      latitude: resolvedLatitude,
+      longitude: resolvedLongitude,
+      location: resolvedLocation,
+    };
   }
 
   /**
