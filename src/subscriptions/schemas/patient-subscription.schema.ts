@@ -35,6 +35,15 @@ export class PatientSubscription {
   @Prop()
   lastPaymentAt?: Date;
 
+  @Prop({ index: true })
+  stripeCustomerId?: string;
+
+  @Prop({ index: true })
+  stripeSubscriptionId?: string;
+
+  @Prop()
+  latestCheckoutSessionId?: string;
+
   @Prop({ default: 'revenuecat' })
   billingProvider: string;
 
