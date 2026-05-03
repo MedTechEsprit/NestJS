@@ -273,10 +273,15 @@ export class RevenueCatBillingService {
       return;
     }
 
+    this.logger.log(`Fetching RevenueCat subscriber for appUserId: ${appUserId} (Source: ${context.source || 'unknown'})`);
     const subscriber = await this.fetchSubscriber(appUserId);
+    
     if (!subscriber) {
+      this.logger.warn(`No RevenueCat subscriber found for appUserId: ${appUserId}`);
       return;
     }
+
+    this.logger.log(`Subscriber found for ${appUserId}. Entitlements: ${Object.keys(subscriber.entitlements || {}).join(', ')}`);
 
     const allAppUserIds = this.extractAppUserIds(subscriber, appUserId);
 
@@ -393,9 +398,17 @@ export class RevenueCatBillingService {
     const boostProductMap = this.getBoostProductMap();
     const boostProductIds = Object.keys(boostProductMap);
 
+    this.logger.log(`Syncing boost for doctor ${medecinId}. EntitlementId=${boostEntitlementId}`);
+
     const boostEntitlement =
       this.getEntitlementById(subscriber, boostEntitlementId) ||
       this.getEntitlementByProduct(subscriber, boostProductIds);
+
+    if (boostEntitlement) {
+      this.logger.log(`Boost entitlement found for doctor ${medecinId}: ${JSON.stringify(boostEntitlement)}`);
+    } else {
+      this.logger.warn(`No boost entitlement found for doctor ${medecinId}. Available entitlements: ${Object.keys(subscriber.entitlements || {}).join(', ')}`);
+    }
 
     const now = new Date();
     const isActive = this.isEntitlementActive(boostEntitlement, now);
