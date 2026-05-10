@@ -85,9 +85,11 @@ export class SubscriptionsController {
   @Post('sync')
   @ApiOperation({ summary: 'Synchroniser le statut Premium depuis RevenueCat' })
   @ApiResponse({ status: 200, description: 'Statut synchronisé' })
-  async syncSubscription(@Req() req: any) {
+  async syncSubscription(@Req() req: any, @Body() body: { revenueCatAppUserId?: string }) {
     const patientId = req.user._id.toString();
-    await this.revenueCatBillingService.syncPremiumForPatient(patientId);
+    const appUserIdHint = body?.revenueCatAppUserId;
+    
+    await this.revenueCatBillingService.syncPremiumForPatient(patientId, appUserIdHint);
 
     // Return updated status
     const sub = await this.subscriptionModel.findOne({

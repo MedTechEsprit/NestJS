@@ -170,10 +170,10 @@ export class RevenueCatBillingService {
     const context: SyncContext = { source: 'verification' };
 
     if (appUserIdHint && appUserIdHint !== patientId) {
-      await this.syncByAppUserId(appUserIdHint, context);
+      await this.syncByAppUserId(appUserIdHint, context, patientId);
     }
 
-    await this.syncByAppUserId(patientId, context);
+    await this.syncByAppUserId(patientId, context, patientId);
 
     const existing = await this.subscriptionModel
       .findOne({ patientId: new Types.ObjectId(patientId) })
@@ -182,7 +182,7 @@ export class RevenueCatBillingService {
 
     const mappedAppUserId = (existing as any)?.revenueCatAppUserId as string | undefined;
     if (mappedAppUserId && mappedAppUserId !== patientId) {
-      await this.syncByAppUserId(mappedAppUserId, context);
+      await this.syncByAppUserId(mappedAppUserId, context, patientId);
     }
   }
 
@@ -190,10 +190,10 @@ export class RevenueCatBillingService {
     const context: SyncContext = { source: 'verification' };
 
     if (appUserIdHint && appUserIdHint !== medecinId) {
-      await this.syncByAppUserId(appUserIdHint, context);
+      await this.syncByAppUserId(appUserIdHint, context, undefined, medecinId);
     }
 
-    await this.syncByAppUserId(medecinId, context);
+    await this.syncByAppUserId(medecinId, context, undefined, medecinId);
 
     const existing = await this.medecinBoostSubscriptionModel
       .findOne({ medecinId: new Types.ObjectId(medecinId) })
@@ -202,7 +202,7 @@ export class RevenueCatBillingService {
 
     const mappedAppUserId = (existing as any)?.revenueCatAppUserId as string | undefined;
     if (mappedAppUserId && mappedAppUserId !== medecinId) {
-      await this.syncByAppUserId(mappedAppUserId, context);
+      await this.syncByAppUserId(mappedAppUserId, context, undefined, medecinId);
     }
   }
 
@@ -223,27 +223,15 @@ export class RevenueCatBillingService {
     const appUserIds = new Set<string>();
 
     for (const sub of patientSubs as any[]) {
-      if (sub?.patientId) {
-        appUserIds.add(String(sub.patientId));
-      }
-      if (sub?.revenueCatAppUserId) {
-        appUserIds.add(String(sub.revenueCatAppUserId));
-      }
-      if (sub?.revenueCatOriginalAppUserId) {
-        appUserIds.add(String(sub.revenueCatOriginalAppUserId));
-      }
+      if (sub?.patientId) appUserIds.add(String(sub.patientId));
+      if (sub?.revenueCatAppUserId) appUserIds.add(String(sub.revenueCatAppUserId));
+      if (sub?.revenueCatOriginalAppUserId) appUserIds.add(String(sub.revenueCatOriginalAppUserId));
     }
 
     for (const boost of medecinBoostSubs as any[]) {
-      if (boost?.medecinId) {
-        appUserIds.add(String(boost.medecinId));
-      }
-      if (boost?.revenueCatAppUserId) {
-        appUserIds.add(String(boost.revenueCatAppUserId));
-      }
-      if (boost?.revenueCatOriginalAppUserId) {
-        appUserIds.add(String(boost.revenueCatOriginalAppUserId));
-      }
+      if (boost?.medecinId) appUserIds.add(String(boost.medecinId));
+      if (boost?.revenueCatAppUserId) appUserIds.add(String(boost.revenueCatAppUserId));
+      if (boost?.revenueCatOriginalAppUserId) appUserIds.add(String(boost.revenueCatOriginalAppUserId));
     }
 
     let processed = 0;
@@ -261,14 +249,15 @@ export class RevenueCatBillingService {
       }
     }
 
-    return {
-      totalCandidates: appUserIds.size,
-      processed,
-      failed,
-    };
+    return { totalCandidates: appUserIds.size, processed, failed };
   }
 
-  private async syncByAppUserId(appUserId: string, context: SyncContext) {
+  private async syncByAppUserId(
+    appUserId: string, 
+    context: SyncContext, 
+    forcePatientId?: string,
+    forceMedecinId?: string
+  ) {
     if (!appUserId) {
       return;
     }
@@ -281,14 +270,22 @@ export class RevenueCatBillingService {
       return;
     }
 
-    this.logger.log(`Subscriber found for ${appUserId}. Entitlements: ${Object.keys(subscriber.entitlements || {}).join(', ')}`);
-
     const allAppUserIds = this.extractAppUserIds(subscriber, appUserId);
 
-    const [patientId, medecinId] = await Promise.all([
+    let [patientId, medecinId] = await Promise.all([
       this.findPatientIdByAppUserIds(allAppUserIds),
       this.findMedecinIdByAppUserIds(allAppUserIds),
     ]);
+
+    // Si on a un ID forcé (depuis le JWT), on l'utilise si aucun n'est trouvé ou pour confirmer
+    if (!patientId && forcePatientId) {
+      patientId = forcePatientId;
+      this.logger.log(`Forcing link to patientId: ${patientId} for subscriber ${appUserId}`);
+    }
+    if (!medecinId && forceMedecinId) {
+      medecinId = forceMedecinId;
+      this.logger.log(`Forcing link to medecinId: ${medecinId} for subscriber ${appUserId}`);
+    }
 
     if (!patientId && !medecinId) {
       this.logger.debug(
@@ -399,10 +396,29 @@ export class RevenueCatBillingService {
     const boostProductIds = Object.keys(boostProductMap);
 
     this.logger.log(`Syncing boost for doctor ${medecinId}. EntitlementId=${boostEntitlementId}`);
+    this.logger.log(`Looking for boostProductIds: [${boostProductIds.join(', ')}]`);
+    this.logger.log(`Subscriber subscriptions keys: [${Object.keys(subscriber?.subscriptions || {}).join(', ')}]`);
+    this.logger.log(`Subscriber non_subscriptions keys: [${Object.keys(subscriber?.non_subscriptions || {}).join(', ')}]`);
 
-    const boostEntitlement =
+    let boostEntitlement =
       this.getEntitlementById(subscriber, boostEntitlementId) ||
       this.getEntitlementByProduct(subscriber, boostProductIds);
+
+    // Si aucun entitlement n'est trouvé (mauvaise config RevenueCat), on cherche directement dans les subscriptions
+    if (!boostEntitlement && subscriber?.subscriptions) {
+      const latestProductId = this.findLatestBoostProductFromSubscriber(subscriber, boostProductIds);
+      this.logger.log(`findLatestBoostProductFromSubscriber result: ${latestProductId}`);
+      if (latestProductId) {
+        const sub = subscriber.subscriptions[latestProductId];
+        boostEntitlement = {
+          product_identifier: latestProductId,
+          purchase_date: sub.purchase_date,
+          expires_date: sub.expires_date,
+          is_sandbox: sub.is_sandbox
+        };
+        this.logger.warn(`Recovered boost from subscriptions (not in entitlements): ${latestProductId}`);
+      }
+    }
 
     if (boostEntitlement) {
       this.logger.log(`Boost entitlement found for doctor ${medecinId}: ${JSON.stringify(boostEntitlement)}`);
